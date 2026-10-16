@@ -10,6 +10,7 @@
 #define MLIR_CONVERSION_PASSES_H
 
 #include "mlir/Conversion/AMDGPUToROCDL/AMDGPUToROCDL.h"
+#include "mlir/Conversion/ANESToLLVM/ANESToLLVM.h"
 #include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
 #include "mlir/Conversion/ArithAndMathToAPFloat/ArithToAPFloat.h"
 #include "mlir/Conversion/ArithAndMathToAPFloat/MathToAPFloat.h"

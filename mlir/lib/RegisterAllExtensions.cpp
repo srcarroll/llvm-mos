@@ -13,6 +13,7 @@
 
 #include "mlir/InitAllExtensions.h"
 
+#include "mlir/Conversion/ANESToLLVM/ANESToLLVM.h"
 #include "mlir/Conversion/ArithToEmitC/ArithToEmitC.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/ComplexToLLVM/ComplexToLLVM.h"
@@ -73,6 +74,7 @@
 void mlir::registerAllExtensions(DialectRegistry &registry) {
   // Register all conversions to LLVM extensions.
   registerConvertArithToEmitCInterface(registry);
+  anes::registerConvertANESToLLVMInterface(registry);
   arith::registerConvertArithToLLVMInterface(registry);
   bufferization::registerAllExtensions(registry);
   registerConvertComplexToLLVMInterface(registry);

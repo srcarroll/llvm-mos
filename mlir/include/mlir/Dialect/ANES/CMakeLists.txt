@@ -1,0 +1,7 @@
+set(LLVM_TARGET_DEFINITIONS ANES.td)
+mlir_tablegen(ANESEnums.h.inc -gen-enum-decls)
+mlir_tablegen(ANESEnums.cpp.inc -gen-enum-defs)
+mlir_tablegen(ANESAttributes.h.inc -gen-attrdef-decls -attrdefs-dialect=anes)
+mlir_tablegen(ANESAttributes.cpp.inc -gen-attrdef-defs -attrdefs-dialect=anes)
+add_mlir_dialect(ANES anes)
+add_mlir_doc(ANES ANES Dialects/ -gen-dialect-doc -dialect=anes)
