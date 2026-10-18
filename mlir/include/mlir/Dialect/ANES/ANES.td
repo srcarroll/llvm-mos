@@ -98,8 +98,8 @@
 //    anes.ppu_off 
 //    
 //    // set all 4 background palettes
-//    anes.set_bg_pallete
-//      // universal background color shared across all palletes
+//    anes.set_bg_palette
+//      // universal background color shared across all palettes
 //      15,
 //      // grays
 //      [0, 16, 48],
@@ -148,10 +148,13 @@
 #ifndef ANES_OPS
 #define ANES_OPS
 
+include "mlir/IR/BuiltinAttributeInterfaces.td"
 include "mlir/IR/BuiltinTypes.td"
 include "mlir/Dialect/LLVMIR/LLVMTypes.td"
 
+include "mlir/IR/CommonAttrConstraints.td"
 include "mlir/IR/EnumAttr.td"
+include "mlir/IR/SymbolInterfaces.td"
 
 //===----------------------------------------------------------------------===//
 // ANES dialect definition
@@ -166,8 +169,8 @@ def ANES_Dialect : Dialect {
 }
 
 class ANES_Type<string typeName, string typeMnemonic, list<Trait> traits = []>
-    : TypeDef<ANES_Dialect, "ANES" # typeName, traits> {
-  let mnemonic = "anes." # typeMnemonic;
+    : TypeDef<ANES_Dialect, typeName, traits> {
+  let mnemonic = typeMnemonic;
 }
 
 class ANES_Op<string mnemonic, list<Trait> traits = []> :
@@ -179,8 +182,17 @@ class ANES_Op<string mnemonic, list<Trait> traits = []> :
 
 def NameTableEnum : I32EnumAttr<
     "NameTableEnum",
-    "An attribute representing the NES nametable; either a tile or color palette in nametable",
+    "An enum representing the NES nametable; either a tile or color palette in nametable",
     [I32EnumAttrCase<"Tile", 0, "tile">, I32EnumAttrCase<"Palette", 1, "palette">]
+> {
+    let genSpecializedAttr = 0;
+    let cppNamespace = "mlir::anes";
+}
+
+def PaletteTypeEnum : I32EnumAttr<
+    "PaletteTypeEnum",
+    "An enum representing a palette: either background or sprite",
+    [I32EnumAttrCase<"Background", 0, "background">, I32EnumAttrCase<"Sprite", 1, "sprite">]
 > {
     let genSpecializedAttr = 0;
     let cppNamespace = "mlir::anes";
@@ -192,7 +204,9 @@ def NameTableEnum : I32EnumAttr<
 
 def NameTableAttr : EnumAttr<ANES_Dialect, NameTableEnum, "nametable_attr">;
 
-def PalleteAttr : ConfinedAttr<DenseI8ArrayAttr, [
+def PaletteTypeAttr : EnumAttr<ANES_Dialect, PaletteTypeEnum, "palette_type_attr">;
+
+def PaletteAttr : ConfinedAttr<DenseI8ArrayAttr, [
   AttrConstraint<CPred<"cast<DenseI8ArrayAttr>($_self).size() == 3">,
   "palette attribute must have 3 elements">
 ]>;
@@ -202,11 +216,105 @@ def MetaTilePalettePatternAttr : ConfinedAttr<DenseI8ArrayAttr, [
   "palette attribute must have 4 elements">
 ]>;
 
+class ANESDialect_Attr<string name, string attrMnemonic, list<Trait> traits = []> 
+    : AttrDef<ANES_Dialect, name, traits> {
+  let mnemonic = attrMnemonic;
+}
+
+def SpriteAttributeAttr : ANESDialect_Attr<"SpriteAttribute", "sprite_attribute"> {
+  let summary = "An attribute that represents the an NES spite attribute.";
+  let description = [{
+    The NES sprite attribute is an 8-bit value laid out as follows
+
+      76543210
+      ||||||||
+      ||||||++- Palette (4 to 7) of sprite
+      |||+++--- Unimplemented
+      ||+------ Priority (0: in front of background; 1: behind background)
+      |+------- Flip sprite horizontally
+      +-------- Flip sprite vertically
+  }];
+
+  let parameters = (ins
+    DefaultValuedParameter<"int", "0">:$palette_id,
+    DefaultValuedParameter<"bool", "false">:$behind,
+    DefaultValuedParameter<"bool", "false">:$flip_hz,
+    DefaultValuedParameter<"bool", "false">:$flip_vr
+  );
+
+  let assemblyFormat = "`<``{` struct(params) `}``>`";
+}
+
+def SpriteDataAttr : ANESDialect_Attr<"SpriteData", "sprite_data"> {
+  let summary = "An attribute that represents a sprite's data.";
+  let description = [{
+    Sprite is defined by coordinates tile id in CHR file and attribute.
+    
+    The NES sprite attribute is an 8-bit value laid out as follows
+
+      76543210
+      ||||||||
+      ||||||++- Palette (4 to 7) of sprite
+      |||+++--- Unimplemented
+      ||+------ Priority (0: in front of background; 1: behind background)
+      |+------- Flip sprite horizontally
+      +-------- Flip sprite vertically
+  }];
+
+  let parameters = (ins
+    OptionalParameter<"std::optional<int>">:$tile,
+    DefaultValuedParameter<"int", "0">:$palette_id,
+    DefaultValuedParameter<"bool", "false">:$behind,
+    DefaultValuedParameter<"bool", "false">:$flip_hz,
+    DefaultValuedParameter<"bool", "false">:$flip_vr
+  );
+
+  let assemblyFormat = "`<``{` struct(params) `}``>`";
+
+  let extraClassDeclaration = [{
+    int8_t packBits() {
+      int8_t attribute = 0;
+      attribute |= (getPaletteId() & 0x03); // Clamp palette to 0-3
+      if (getBehind()) attribute |= (1 << 5);
+      if (getFlipHz())    attribute |= (1 << 6);
+      if (getFlipVr())    attribute |= (1 << 7);
+      return attribute; 
+    }
+  }];
+}
+
+def ANES_MetaSpriteAttr : AttrDef<ANES_Dialect, "MetaSprite", [TypedAttrInterface]> {
+  let summary = "2D matrix of `SpriteDataAttr`";
+  let mnemonic = "meta_sprite";
+
+  let parameters = (ins
+    AttributeSelfTypeParameter<"The associated MetaSpriteHandleType", "::mlir::anes::MetaSpriteHandleType">:$type,
+    
+    ArrayRefParameter<"::mlir::anes::SpriteDataAttr", "array of `SpriteDataAttr`">:$elements
+  );
+
+  let assemblyFormat = "`<` `[` $elements `]` `>`";
+}
+
 //===----------------------------------------------------------------------===//
 // ANES dialect Types
 //===----------------------------------------------------------------------===//
 
 def ANES_TetType : ANES_Type<"Test", "test">;
+
+def ANES_MetaSpriteHandle : ANES_Type<"MetaSpriteHandle", "meta_sprite_handle"> {
+  let parameters = (ins 
+    "unsigned":$num_rows,
+    "unsigned":$num_cols
+  );
+  let assemblyFormat = "`<` $num_rows`,` $num_cols `>`";
+  
+  let extraClassDeclaration = [{
+    int64_t getNumElements() {
+      return getNumRows() * getNumCols();
+    }
+  }];
+}
 
 //===----------------------------------------------------------------------===//
 // ANES dialect Ops 
@@ -230,9 +338,14 @@ def ANES_PPUOnOp :
   let assemblyFormat = "attr-dict";
 }
 
-def ANES_SetBGPalletteOp :
-    ANES_Op<"set_bg_pallete", []> {
-  let summary = "Set the 4 background palletes to specified color values";
+//===----------------------------------------------------------------------===//
+// Background graphics
+//===----------------------------------------------------------------------===//
+
+
+def ANES_SetPalletteOp :
+    ANES_Op<"set_palette", []> {
+  let summary = "Set the 4 background or sprite palettes to specified color values";
 
   let description = [{
     The NES background palette is described by a 16 byte array, 1 byte for
@@ -250,18 +363,19 @@ def ANES_SetBGPalletteOp :
 
   let arguments = (ins
     I8Attr:$ubc,
-    PalleteAttr:$pallete0,
-    PalleteAttr:$pallete1,
-    PalleteAttr:$pallete2,
-    PalleteAttr:$pallete3
+    PaletteAttr:$palette0,
+    PaletteAttr:$palette1,
+    PaletteAttr:$palette2,
+    PaletteAttr:$palette3,
+    PaletteTypeAttr:$palette_type
   );
 
-  let assemblyFormat = "attr-dict $ubc`,` $pallete0`,` $pallete1`,` $pallete2`,` $pallete3";
+  let assemblyFormat = "attr-dict $palette_type $ubc`,` $palette0`,` $palette1`,` $palette2`,` $palette3";
 }
 
 def ANES_SetSprPalletteOp :
-    ANES_Op<"set_spr_pallete", []> {
-  let summary = "Set the sprite pallete to a value in memory";
+    ANES_Op<"set_spr_palette", []> {
+  let summary = "Set the sprite palette to a value in memory";
 
   let arguments = (ins LLVM_AnyPointer:$source);
 
@@ -377,7 +491,7 @@ def ANES_SetPalAttrAtOp :
   let summary = "Set the palette pattern for a meta-tile at specified coordinate.";
 
   let description = [{
-    The pallete pattern is defined as a 4x4 array of palette indices (0, 1, 2, or 3).
+    The palette pattern is defined as a 4x4 array of palette indices (0, 1, 2, or 3).
     It is used to color a 32x32 (pixel) meta-tile where each of the 4 palettes color
     one of the 16x16 tiles in the meta-tile (that's just how NES PPU works).
     In this op, it is represented as a 1D 4 element array. If $pattern = [p0, p1, p2, p3]
@@ -411,6 +525,88 @@ def ANES_FillPalAttrAtOp :
   let arguments = (ins MetaTilePalettePatternAttr:$pattern, I16:$length, I8:$x, I8:$y);
 
   let assemblyFormat = "attr-dict $pattern `x` $length `at` `(`$x`,` $y`)`";
+}
+
+//===----------------------------------------------------------------------===//
+// Sprite graphics
+//===----------------------------------------------------------------------===//
+
+def ANES_CreateMetaSpriteOp :
+ANES_Op<"create_meta_sprite", []> {
+  let summary = "Creates a meta-sprite from coordinate, attribute, and tile values.";
+
+  let description = [{
+    This op takes a variadic list of tuples (x, y, tile, attribute), where x and y
+    are the positional coordinates of the meta-sprite, tile is the index of the tile
+    in the CHR file, and attribute is the 8-bit sprite attribute (see `SpriteAttributeAttr`).
+
+    ```mlir
+      anes.create_meta_sprite [
+          (%x, %y, %tile, #anes.sprite_attribute<{palette_id = 0, flip_hz = true}>),
+          (%x2, %y2, %tile, #anes.sprite_attribute<{palette_id = 3, behind = true}>)
+      ]
+    ```
+  }];
+
+  let arguments = (ins
+      ANES_MetaSpriteAttr:$meta_tile
+  );
+
+    let assemblyFormat = "attr-dict $meta_tile";
+}
+
+
+def ANES_GlobalMetaSpriteOp : ANES_Op<"global_meta_sprite",
+    [IsolatedFromAbove, SymbolName,
+     SymbolVisibility, Symbol]> {
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    TypeAttr:$result_type,
+    OptionalAttr<ANES_MetaSpriteAttr>:$value,
+    OptionalAttr<UnitAttr>:$constant,
+    OptionalAttr<StrAttr>:$sym_visibility
+  );
+  let summary = "Global for meta-sprite.";
+  let description = [{
+
+  }];
+
+  let assemblyFormat = [{attr-dict
+    ($sym_visibility^)? (`constant` $constant^)? $sym_name`(`(qualified($value)^)?`)` `:` $result_type
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// GetGlobalMetaSpriteOp
+//===----------------------------------------------------------------------===//
+
+def ANES_GetGlobalMetaSpriteOp : ANES_Op<"get_global_meta_sprite",
+    [Pure, DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Get the value from a `global_meta_sprite` op";
+
+  let arguments = (ins FlatSymbolRefAttr:$name);
+  let results = (outs ANES_MetaSpriteHandle:$result);
+  let assemblyFormat = " attr-dict $name `:` type($result)";
+}
+
+//===----------------------------------------------------------------------===//
+// SetMetaSpriteAtOp
+//===----------------------------------------------------------------------===//
+
+def ANES_SetMetaSpriteAtOp :
+    ANES_Op<"set_meta_sprite_at", []> {
+  let summary = "Set a meta sprite at specified coordinate.";
+
+  let description = [{
+    The `meta_sprite` is an i8 array corresponding to meta sprite data. 
+
+    This op creates a pointer to the meta sprite data, and passes it
+    and coordinates to `oam_meta_sprite` from neslib.
+  }];
+
+  let arguments = (ins ANES_MetaSpriteHandle:$meta_sprite, I8:$x, I8:$y);
+
+  let assemblyFormat = "attr-dict $meta_sprite `at` `(`$x`,` $y`)` `:` type($meta_sprite)";
 }
 
 #endif // ANES_OPS

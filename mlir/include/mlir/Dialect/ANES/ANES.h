@@ -22,13 +22,13 @@
 #include "mlir/Dialect/ANES/ANESDialect.h.inc"
 #include "mlir/Dialect/ANES/ANESEnums.h.inc"
 
+#define GET_TYPEDEF_CLASSES
+#include "mlir/Dialect/ANES/ANESTypes.h.inc"
+
 #define GET_ATTRDEF_CLASSES
 #include "mlir/Dialect/ANES/ANESAttributes.h.inc"
 
 #define GET_OP_CLASSES
 #include "mlir/Dialect/ANES/ANES.h.inc"
-
-#define GET_TYPEDEF_CLASSES
-#include "mlir/Dialect/ANES/ANESTypes.h.inc"
 
 #endif // MLIR_DIALECT_ANES_ANES_H_

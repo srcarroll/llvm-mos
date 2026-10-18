@@ -1,8 +1,10 @@
-// RUN: mlir-opt -convert-to-llvm --canonicalize --cse -split-input-file %s | FileCheck %s
+// RUN: mlir-opt -convert-to-llvm -split-input-file %s | mlir-opt --canonicalize --cse -split-input-file | FileCheck %s
+// TODO: Figure out why -convert-to-llvm -canonicalize crashes on test cases there convert !anes.meta_sprite_handle
+// in function arg or returns
 
-// CHECK: llvm.mlir.global internal @palette() {addr_space = 0 : i32} : !llvm.array<16 x i8>
-// CHECK-LABEL: @set_bg_pallete
-func.func @set_bg_pallete() {
+// CHECK: llvm.mlir.global internal @bg_palette() {addr_space = 0 : i32} : !llvm.array<16 x i8>
+// CHECK-LABEL: @set_bg_palette
+func.func @set_bg_palette() {
 // CHECK-DAG: %[[C1:.*]] = llvm.mlir.constant(1 : i8) : i8
 // CHECK-DAG: %[[C2:.*]] = llvm.mlir.constant(2 : i8) : i8
 // CHECK-DAG: %[[C3:.*]] = llvm.mlir.constant(3 : i8) : i8
@@ -15,7 +17,7 @@ func.func @set_bg_pallete() {
 // CHECK-DAG: %[[C10:.*]] = llvm.mlir.constant(10 : i8) : i8
 // CHECK-DAG: %[[C11:.*]] = llvm.mlir.constant(11 : i8) : i8
 
-// CHECK:      %[[PAL_PTR:.*]] = llvm.mlir.addressof @palette : !llvm.ptr
+// CHECK:      %[[PAL_PTR:.*]] = llvm.mlir.addressof @bg_palette : !llvm.ptr
 
 // CHECK:      %[[C0:.*]] = llvm.mlir.constant(0 : i8) : i8
 // CHECK-NEXT: llvm.store %[[C0]], %[[PAL_PTR]]
@@ -55,7 +57,7 @@ func.func @set_bg_pallete() {
 // CHECK-NEXT: llvm.store %[[C11]], %[[PTR_15]]
 
 // CHECK-NEXT: llvm.call @pal_bg(%[[PAL_PTR]]) : (!llvm.ptr) -> ()
-    anes.set_bg_pallete 0, [0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10, 11]
+    anes.set_palette <background> 0, [0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10, 11]
 
 // CHECK-NEXT: return
     return
@@ -203,3 +205,40 @@ func.func @fill_pal_pattern_at(%x: i8, %y: i8, %length: i16) {
     return
 }
 
+// -----
+
+// CHECK: llvm.mlir.global internal @metasprite(dense<[0, 0, 1, 0, 8, 0, 1, 64, 0, 8, 17, 0, 8, 8, 4, 64, -128]> : tensor<17xi8>) {addr_space = 0 : i32} : !llvm.array<17 x i8>
+anes.global_meta_sprite @metasprite(#anes.meta_sprite<[ 
+    #anes.sprite_data<{tile = 1}>, #anes.sprite_data<{tile = 1, flip_hz = true}>,
+    #anes.sprite_data<{tile = 17}>, #anes.sprite_data<{tile = 4, flip_hz = true}>
+    
+]> : !anes.meta_sprite_handle<2, 2>) : !anes.meta_sprite_handle<2, 2>
+
+// CHECK-LABEL: @get_global_meta_sprite
+func.func @get_global_meta_sprite() -> !anes.meta_sprite_handle<2, 2> {
+// CHECK: %[[ADDR:.*]] = llvm.mlir.addressof @metasprite : !llvm.ptr
+    %0 = anes.get_global_meta_sprite @metasprite : !anes.meta_sprite_handle<2, 2>
+// CHECK-NEXT: llvm.return %[[ADDR]] : !llvm.ptr
+    return %0 : !anes.meta_sprite_handle<2, 2>
+}
+
+// -----
+
+// CHECK-LABEL: @set_meta_sprite_at
+// CHECK-SAME:   (%[[PTR:.*]]: !llvm.ptr, %[[X:.*]]: i8, %[[Y:.*]]: i8)
+func.func @set_meta_sprite_at(%metasprite: !anes.meta_sprite_handle<2, 2>, %x: i8, %y: i8) {
+// CHECK-NEXT: llvm.call @oam_meta_spr(%[[X]], %[[Y]], %[[PTR]]) : (i8, i8, !llvm.ptr) -> ()
+    anes.set_meta_sprite_at %metasprite at (%x, %y) : !anes.meta_sprite_handle<2, 2>
+
+// // CHECK-NEXT: llvm.return
+    return
+}
+
+// -----
+
+// CHECK: llvm.mlir.global internal @metasprite(dense<[8, 0, 1, 64, 0, 8, 17, 0, 8, 8, 4, 64, -128]> : tensor<13xi8>) {addr_space = 0 : i32} : !llvm.array<13 x i8>
+anes.global_meta_sprite @metasprite(#anes.meta_sprite<[ 
+    #anes.sprite_data<{}>, #anes.sprite_data<{tile = 1, flip_hz = true}>,
+    #anes.sprite_data<{tile = 17}>, #anes.sprite_data<{tile = 4, flip_hz = true}>
+    
+]> : !anes.meta_sprite_handle<2, 2>) : !anes.meta_sprite_handle<2, 2>

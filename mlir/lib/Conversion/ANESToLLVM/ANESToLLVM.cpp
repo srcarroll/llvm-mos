@@ -96,12 +96,16 @@ getOrCreateGlobal(OpBuilder &builder, Location loc, ModuleOp module,
                                 /*value=*/Attribute());
 }
 
-struct SetBGPalletteOpLowering final
-    : public OpConversionPattern<anes::SetBGPalletteOp> {
+//===----------------------------------------------------------------------===//
+// Background Graphics Related Ops
+//===----------------------------------------------------------------------===//
+
+struct SetPalletteOpLowering final
+    : public OpConversionPattern<anes::SetPalletteOp> {
   using Base::Base;
 
   LogicalResult
-  matchAndRewrite(anes::SetBGPalletteOp op, OpAdaptor adaptor,
+  matchAndRewrite(anes::SetPalletteOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const final {
     auto loc = op.getLoc();
 
@@ -109,7 +113,10 @@ struct SetBGPalletteOpLowering final
     if (!moduleOp)
       return rewriter.notifyMatchFailure(op, "Parent module not found.");
 
-    StringRef paletteName = "palette";
+    StringRef paletteName =
+        (op.getPaletteType() == anes::PaletteTypeEnum::Background)
+            ? "bg_palette"
+            : "spr_palette";
     (void)getOrCreateGlobal(rewriter, loc, moduleOp, paletteName,
                             LLVM::LLVMArrayType::get(rewriter.getI8Type(), 16));
 
@@ -139,13 +146,16 @@ struct SetBGPalletteOpLowering final
       }
     };
 
-    storePaletteVals(op.getPallete0(), 0);
-    storePaletteVals(op.getPallete1(), 4);
-    storePaletteVals(op.getPallete2(), 8);
-    storePaletteVals(op.getPallete3(), 12);
+    storePaletteVals(op.getPalette0(), 0);
+    storePaletteVals(op.getPalette1(), 4);
+    storePaletteVals(op.getPalette2(), 8);
+    storePaletteVals(op.getPalette3(), 12);
 
+    StringRef fnName =
+        (op.getPaletteType() == anes::PaletteTypeEnum::Background) ? "pal_bg"
+                                                                   : "pal_spr";
     auto funcOp = LLVM::lookupOrCreateFn(
-        rewriter, moduleOp, "pal_bg",
+        rewriter, moduleOp, fnName,
         {LLVM::LLVMPointerType::get(rewriter.getContext())},
         LLVM::LLVMVoidType::get(rewriter.getContext()));
     if (failed(funcOp))
@@ -410,6 +420,116 @@ struct FillPalAttrAtOpLowering final
 };
 
 //===----------------------------------------------------------------------===//
+// Sprite Graphics Related Ops
+//===----------------------------------------------------------------------===//
+
+struct GlobalMetaSpriteOpLowering final
+    : public OpConversionPattern<anes::GlobalMetaSpriteOp> {
+  using Base::Base;
+
+  LogicalResult
+  matchAndRewrite(anes::GlobalMetaSpriteOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const final {
+    auto loc = op.getLoc();
+
+    auto isConstant = (op.getConstant()) ? op.getConstant().value() : false;
+
+    auto metaSpriteTy = cast<anes::MetaSpriteHandleType>(op.getResultType());
+    auto numCols = metaSpriteTy.getNumCols();
+
+    Attribute value;
+
+    int64_t arraySize = 0;
+    auto maybeValue = op.getValue();
+    if (maybeValue) {
+      auto elements = maybeValue.value().getElements();
+      SmallVector<int8_t, 4> values;
+      for (auto [idx, spriteData] : llvm::enumerate(elements)) {
+        auto spriteDataAttr = cast<anes::SpriteDataAttr>(spriteData);
+        if (!spriteDataAttr.getTile())
+          continue;
+        size_t i = idx % numCols;
+        size_t j = idx / numCols;
+        values.push_back(i * 8);
+        values.push_back(j * 8);
+        values.push_back(spriteDataAttr.getTile().value());
+        values.push_back(spriteDataAttr.packBits());
+      }
+
+      // add end of metasprite token
+      values.push_back(-128);
+
+      arraySize = values.size();
+      // value = rewriter.getDenseI8ArrayAttr(values);
+      value = DenseElementsAttr::get(
+          RankedTensorType::get({arraySize},
+                                rewriter.getI8Type()),
+          llvm::ArrayRef<int8_t>(values));
+    }
+
+    // TODO: Not sure about linkage here.
+    auto arrayTy =
+        LLVM::LLVMArrayType::get(rewriter.getI8Type(), arraySize);
+    auto globalOp =
+        LLVM::GlobalOp::create(rewriter, loc, arrayTy, isConstant,
+                               LLVM::Linkage::Internal, op.getSymName(),
+                               /*value=*/value);
+
+    rewriter.replaceOp(op, globalOp);
+    return success();
+  }
+};
+
+struct GetGlobalMetaSpriteOpLowering final
+    : public OpConversionPattern<anes::GetGlobalMetaSpriteOp> {
+  using Base::Base;
+
+  LogicalResult
+  matchAndRewrite(anes::GetGlobalMetaSpriteOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const final {
+    auto loc = op.getLoc();
+
+    auto addrOfOp = LLVM::AddressOfOp::create(
+        rewriter, loc, LLVM::LLVMPointerType::get(rewriter.getContext()),
+        op.getName());
+
+    rewriter.replaceOp(op, addrOfOp);
+    return success();
+  }
+};
+
+struct SetMetaSpriteAtOpLowering final
+    : public OpConversionPattern<anes::SetMetaSpriteAtOp> {
+  using Base::Base;
+
+  LogicalResult
+  matchAndRewrite(anes::SetMetaSpriteAtOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const final {
+    auto loc = op.getLoc();
+
+    auto moduleOp = op->getParentOfType<ModuleOp>();
+    if (!moduleOp)
+      return rewriter.notifyMatchFailure(op, "Parent module not found.");
+
+    auto funcOp =
+        LLVM::lookupOrCreateFn(rewriter, moduleOp, "oam_meta_spr",
+                               {rewriter.getI8Type(), rewriter.getI8Type(),
+                                LLVM::LLVMPointerType::get(getContext())},
+                               LLVM::LLVMVoidType::get(rewriter.getContext()));
+    if (failed(funcOp))
+      return rewriter.notifyMatchFailure(
+          op, "could not find or create oam_meta_spr func");
+
+    auto callOp = LLVM::CallOp::create(
+        rewriter, loc, funcOp.value(),
+        ValueRange{op.getX(), op.getY(), adaptor.getMetaSprite()});
+
+    rewriter.replaceOp(op, callOp);
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
 // ConvertToLLVMPatternInterface implementation
 //===----------------------------------------------------------------------===//
 
@@ -428,11 +548,16 @@ struct ANESToLLVMDialectInterface : public ConvertToLLVMPatternInterface {
   void populateConvertToLLVMConversionPatterns(
       ConversionTarget &target, LLVMTypeConverter &typeConverter,
       RewritePatternSet &patterns) const final {
-    patterns.add<PPUOffOpLowering, PPUOnOpLowering, SetBGPalletteOpLowering,
+    typeConverter.addConversion([&](anes::MetaSpriteHandleType type) -> Type {
+      return LLVM::LLVMPointerType::get(patterns.getContext());
+    });
+    patterns.add<PPUOffOpLowering, PPUOnOpLowering, SetPalletteOpLowering,
                  SetVRAMAddrForTilePosOpLowering, SetPalAttrAtOpLowering,
                  FillPalAttrAtOpLowering, SetTileAtOpLowering,
                  SetAllTilesAtOpLowering, FillTilesFromRLEAtOpLowering,
-                 VRAMPutOpLowering>(patterns.getContext());
+                 VRAMPutOpLowering, GlobalMetaSpriteOpLowering,
+                 GetGlobalMetaSpriteOpLowering, SetMetaSpriteAtOpLowering>(
+        patterns.getContext());
   }
 };
 } // namespace
