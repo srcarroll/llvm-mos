@@ -10,17 +10,13 @@
 
 #include "mlir/Conversion/ConvertToLLVM/ToLLVMInterface.h"
 #include "mlir/Conversion/LLVMCommon/ConversionTarget.h"
+#include "mlir/Conversion/LLVMCommon/Pattern.h"
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/Dialect/ANES/ANES.h"
 #include "mlir/Dialect/LLVMIR/FunctionCallUtils.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Pass/Pass.h"
 
-// From llvm-mos-sdk project
-// TODO: ANES Dialect and lowering should really live in that project
-// If they did, then we could just include the neslib.h header here to get the
-// definitions But for now we will just copy over.
-#define NAMETABLE_A 0x2000
 
 namespace mlir {
 #define GEN_PASS_DEF_ANESTOLLVMCONVERSIONPASS
@@ -166,12 +162,13 @@ struct SetPalletteOpLowering final
   }
 };
 
-// compute address as (NAMETABLE_A | (((y) << 5) | (x))). see neslib.h in
+// compute address as (nametable | (((y) << 5) | (x))). see neslib.h in
 // llvm-mos-sdk project
 static Value computeNameTableAddr(ConversionPatternRewriter &rewriter,
-                                  Location loc, Value x, Value y) {
-  Value nametableAddrConst = LLVM::ConstantOp::create(
-      rewriter, loc, rewriter.getI16Type(), NAMETABLE_A);
+                                  Location loc, Value x, Value y,
+                                  int nametable) {
+  Value nametableAddrConst =
+      LLVM::ConstantOp::create(rewriter, loc, rewriter.getI16Type(), nametable);
 
   auto fiveConst =
       LLVM::ConstantOp::create(rewriter, loc, rewriter.getI16Type(), 5);
@@ -221,9 +218,10 @@ struct SetVRAMAddrForTilePosOpLowering final
       return rewriter.notifyMatchFailure(op, "Parent module not found.");
 
     Value addr;
-    if (op.getMode() == anes::NameTableEnum::Tile)
-      addr = computeNameTableAddr(rewriter, loc, op.getX(), op.getY());
-    else if (op.getMode() == anes::NameTableEnum::Palette) {
+    if (op.getMode() == anes::NameTableTypeEnum::Tile)
+      addr = computeNameTableAddr(rewriter, loc, op.getX(), op.getY(),
+                                  static_cast<int>(op.getNametable()));
+    else if (op.getMode() == anes::NameTableTypeEnum::Palette) {
       auto maybeAddr = computeNameTableAttributeAddr(moduleOp, rewriter, loc,
                                                      op.getX(), op.getY());
       if (failed(maybeAddr))
@@ -279,9 +277,8 @@ struct SetTileAtOpLowering final
     auto loc = op.getLoc();
 
     (void)anes::SetVRAMAddrForTilePosOp::create(
-        rewriter, loc, op.getX(), op.getY(),
-        anes::NameTableEnumAttr::get(rewriter.getContext(),
-                                     anes::NameTableEnum::Tile));
+        rewriter, loc, op.getX(), op.getY(), anes::NameTableTypeEnum::Tile,
+        anes::NameTableEnum::A);
 
     auto vramPutOp = anes::VRAMPutOp::create(rewriter, loc, op.getValue());
     rewriter.replaceOp(op, vramPutOp);
@@ -299,9 +296,8 @@ struct SetAllTilesAtOpLowering final
     auto loc = op.getLoc();
 
     (void)anes::SetVRAMAddrForTilePosOp::create(
-        rewriter, loc, op.getX(), op.getY(),
-        anes::NameTableEnumAttr::get(rewriter.getContext(),
-                                     anes::NameTableEnum::Tile));
+        rewriter, loc, op.getX(), op.getY(), anes::NameTableTypeEnum::Tile,
+        anes::NameTableEnum::A);
 
     auto array = op.getArray();
     auto arrayTy = cast<LLVM::LLVMArrayType>(array.getType());
@@ -332,9 +328,8 @@ struct FillTilesFromRLEAtOpLowering final
       return rewriter.notifyMatchFailure(op, "Parent module not found.");
 
     (void)anes::SetVRAMAddrForTilePosOp::create(
-        rewriter, loc, op.getX(), op.getY(),
-        anes::NameTableEnumAttr::get(rewriter.getContext(),
-                                     anes::NameTableEnum::Tile));
+        rewriter, loc, op.getX(), op.getY(), anes::NameTableTypeEnum::Tile,
+        op.getNametable());
     auto funcOp = LLVM::lookupOrCreateFn(
         rewriter, moduleOp, "vram_unrle",
         LLVM::LLVMPointerType::get(rewriter.getContext()),
@@ -372,9 +367,8 @@ struct SetPalAttrAtOpLowering final
     auto loc = op.getLoc();
 
     (void)anes::SetVRAMAddrForTilePosOp::create(
-        rewriter, loc, op.getX(), op.getY(),
-        anes::NameTableEnumAttr::get(rewriter.getContext(),
-                                     anes::NameTableEnum::Palette));
+        rewriter, loc, op.getX(), op.getY(), anes::NameTableTypeEnum::Palette,
+        anes::NameTableEnum::A);
 
     SmallVector<int8_t> palPattern(op.getPattern());
     auto vramPutOp = anes::VRAMPutOp::create(
@@ -398,9 +392,8 @@ struct FillPalAttrAtOpLowering final
       return rewriter.notifyMatchFailure(op, "Parent module not found.");
 
     (void)anes::SetVRAMAddrForTilePosOp::create(
-        rewriter, loc, op.getX(), op.getY(),
-        anes::NameTableEnumAttr::get(rewriter.getContext(),
-                                     anes::NameTableEnum::Palette));
+        rewriter, loc, op.getX(), op.getY(), anes::NameTableTypeEnum::Palette,
+        anes::NameTableEnum::A);
 
     auto funcOp =
         LLVM::lookupOrCreateFn(rewriter, moduleOp, "vram_fill",
@@ -408,12 +401,42 @@ struct FillPalAttrAtOpLowering final
                                LLVM::LLVMVoidType::get(rewriter.getContext()));
     if (failed(funcOp))
       return rewriter.notifyMatchFailure(
-          op, "could not find or create vram_put func");
+          op, "could not find or create vram_fill func");
     SmallVector<int8_t> palPattern(op.getPattern());
     auto palPatternConst = packPalPattern(rewriter, loc, palPattern);
     auto callOp =
         LLVM::CallOp::create(rewriter, loc, funcOp.value(),
                              ValueRange{palPatternConst, op.getLength()});
+    rewriter.replaceOp(op, callOp);
+    return success();
+  }
+};
+
+struct ScrollScreenOpLowering final
+    : public ConvertOpToLLVMPattern<anes::ScrollScreenOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(anes::ScrollScreenOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const final {
+    auto loc = op.getLoc();
+
+    auto moduleOp = op->getParentOfType<ModuleOp>();
+    if (!moduleOp)
+      return rewriter.notifyMatchFailure(op, "Parent module not found.");
+
+    auto funcOp = LLVM::lookupOrCreateFn(
+        rewriter, moduleOp, "scroll", {getIndexType(), getIndexType()},
+        LLVM::LLVMVoidType::get(rewriter.getContext()));
+    if (failed(funcOp))
+      return rewriter.notifyMatchFailure(
+          op, "could not find or create scroll func");
+    auto yScreenSize =
+        LLVM::ConstantOp::create(rewriter, loc, adaptor.getY().getType(), 240);
+    auto yMod = LLVM::URemOp::create(rewriter, loc, adaptor.getY().getType(),
+                                     adaptor.getY(), yScreenSize);
+    auto callOp = LLVM::CallOp::create(rewriter, loc, funcOp.value(),
+                                       ValueRange{adaptor.getX(), yMod});
     rewriter.replaceOp(op, callOp);
     return success();
   }
@@ -462,14 +485,12 @@ struct GlobalMetaSpriteOpLowering final
       arraySize = values.size();
       // value = rewriter.getDenseI8ArrayAttr(values);
       value = DenseElementsAttr::get(
-          RankedTensorType::get({arraySize},
-                                rewriter.getI8Type()),
+          RankedTensorType::get({arraySize}, rewriter.getI8Type()),
           llvm::ArrayRef<int8_t>(values));
     }
 
     // TODO: Not sure about linkage here.
-    auto arrayTy =
-        LLVM::LLVMArrayType::get(rewriter.getI8Type(), arraySize);
+    auto arrayTy = LLVM::LLVMArrayType::get(rewriter.getI8Type(), arraySize);
     auto globalOp =
         LLVM::GlobalOp::create(rewriter, loc, arrayTy, isConstant,
                                LLVM::Linkage::Internal, op.getSymName(),
@@ -555,9 +576,10 @@ struct ANESToLLVMDialectInterface : public ConvertToLLVMPatternInterface {
                  SetVRAMAddrForTilePosOpLowering, SetPalAttrAtOpLowering,
                  FillPalAttrAtOpLowering, SetTileAtOpLowering,
                  SetAllTilesAtOpLowering, FillTilesFromRLEAtOpLowering,
-                 VRAMPutOpLowering, GlobalMetaSpriteOpLowering,
-                 GetGlobalMetaSpriteOpLowering, SetMetaSpriteAtOpLowering>(
-        patterns.getContext());
+                 VRAMPutOpLowering, ScrollScreenOpLowering,
+                 GlobalMetaSpriteOpLowering, GetGlobalMetaSpriteOpLowering,
+                 SetMetaSpriteAtOpLowering>(patterns.getContext());
+    patterns.add<ScrollScreenOpLowering>(typeConverter);
   }
 };
 } // namespace

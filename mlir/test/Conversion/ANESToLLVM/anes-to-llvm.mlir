@@ -1,4 +1,4 @@
-// RUN: mlir-opt -convert-to-llvm -split-input-file %s | mlir-opt --canonicalize --cse -split-input-file | FileCheck %s
+// RUN: mlir-opt -convert-to-llvm=dynamic=true -split-input-file %s | mlir-opt --canonicalize --cse -split-input-file | FileCheck %s
 // TODO: Figure out why -convert-to-llvm -canonicalize crashes on test cases there convert !anes.meta_sprite_handle
 // in function arg or returns
 
@@ -76,7 +76,7 @@ func.func @vram_addr_for_tile_pos_tile(%x: i8, %y: i8) {
 // CHECK-NEXT: %[[OR:.*]] = llvm.or %[[SHL]], %[[XEXT]]
 // CHECK-NEXT: %[[ADDR:.*]] = llvm.or %[[NAMETABLE_A]], %[[OR]]
 // CHECK-NEXT: llvm.call @vram_adr(%[[ADDR]])
-    anes.vram_addr_for_tile_pos(%x, %y) <tile> 
+    anes.vram_addr_for_tile_pos <a> (%x, %y) <tile> 
 
 // CHECK-NEXT: llvm.return
     return
@@ -90,7 +90,7 @@ func.func @vram_addr_for_tile_pos_pal(%x: i8, %y: i8) {
 // CHECK-DAG:  %[[C0:.*]] = llvm.mlir.constant(0 : i8) : i8
 // CHECK:      %[[ADDR:.*]] = llvm.call @get_at_addr(%[[C0]], %[[X]], %[[Y]])
 // CHECK-NEXT: llvm.call @vram_adr(%[[ADDR]])
-    anes.vram_addr_for_tile_pos(%x, %y) <palette> 
+    anes.vram_addr_for_tile_pos <a> (%x, %y) <palette> 
 
 // CHECK-NEXT: llvm.return
     return
@@ -166,7 +166,7 @@ func.func @fill_tiles_from_compressed_at(%value: !llvm.ptr, %x: i8, %y: i8) {
 // CHECK-NEXT: %[[ADDR:.*]] = llvm.or %[[NAMETABLE_A]], %[[OR]]
 // CHECK-NEXT: llvm.call @vram_adr(%[[ADDR]])
 // CHECK-NEXT: llvm.call @vram_unrle(%[[RLE_PTR]])
-    anes.fill_tiles_from_rle_at %value at (%x, %y) : !llvm.ptr
+    anes.fill_tiles_from_rle_at %value at <a> (%x, %y) : !llvm.ptr
     return
 }
 
@@ -190,7 +190,6 @@ func.func @set_pal_pattern_at(%x: i8, %y: i8) {
 
 // -----
 
-
 // CHECK-LABEL: @fill_pal_pattern_at
 // CHECK-SAME:   (%[[X:.*]]: i8, %[[Y:.*]]: i8, %[[LENGTH:.*]]: i16)
 func.func @fill_pal_pattern_at(%x: i8, %y: i8, %length: i16) {
@@ -203,6 +202,27 @@ func.func @fill_pal_pattern_at(%x: i8, %y: i8, %length: i16) {
 // CHECK-NEXT: llvm.call @vram_fill(%[[PAL_PAT_VAL]], %[[LENGTH]])
     anes.fill_pal_pattern_at [1, 0, 2, 3] x %length at (%x, %y)
     return
+}
+
+// -----
+
+module attributes {
+
+dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<index, 16>>
+
+} {
+
+// CHECK-LABEL: @scroll_screen
+// CHECK-SAME:   (%[[X:.*]]: i16, %[[Y:.*]]: i16)
+func.func @scroll_screen(%x: index, %y: index) {
+// CHECK-DAG:    %[[C240:.*]] = llvm.mlir.constant(240 : i16) : i16
+// CHECK-NEXT:   %[[Y_MOD:.*]] = llvm.urem %[[Y]], %[[C240]]
+// CHECK-NEXT:   llvm.call @scroll(%[[X]], %[[Y_MOD]])
+    anes.scroll_screen (%x, %y)
+
+// CHECK-NEXT:   llvm.return
+    return
+}
 }
 
 // -----

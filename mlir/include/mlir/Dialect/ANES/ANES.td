@@ -182,7 +182,17 @@ class ANES_Op<string mnemonic, list<Trait> traits = []> :
 
 def NameTableEnum : I32EnumAttr<
     "NameTableEnum",
-    "An enum representing the NES nametable; either a tile or color palette in nametable",
+    "An enum representing the one of the 4 NES nametables",
+    [I32EnumAttrCase<"A", 8192, "a">, I32EnumAttrCase<"B", 9216, "b">,
+     I32EnumAttrCase<"C", 10240, "c">, I32EnumAttrCase<"D", 11264, "d">]
+> {
+    let genSpecializedAttr = 0;
+    let cppNamespace = "mlir::anes";
+}
+
+def NameTableTypeEnum : I32EnumAttr<
+    "NameTableTypeEnum",
+    "An enum representing the NES nametable type; either a tile or color palette in nametable",
     [I32EnumAttrCase<"Tile", 0, "tile">, I32EnumAttrCase<"Palette", 1, "palette">]
 > {
     let genSpecializedAttr = 0;
@@ -203,6 +213,8 @@ def PaletteTypeEnum : I32EnumAttr<
 //===----------------------------------------------------------------------===//
 
 def NameTableAttr : EnumAttr<ANES_Dialect, NameTableEnum, "nametable_attr">;
+
+def NameTableTypeAttr : EnumAttr<ANES_Dialect, NameTableTypeEnum, "nametable_type_attr">;
 
 def PaletteTypeAttr : EnumAttr<ANES_Dialect, PaletteTypeEnum, "palette_type_attr">;
 
@@ -414,9 +426,9 @@ def ANES_SetVRAMAddrForTilePosOp :
     `vram_addr` from neslib. 
   }];
 
-  let arguments = (ins I8:$x, I8:$y, NameTableAttr:$mode);
+  let arguments = (ins I8:$x, I8:$y, NameTableTypeAttr:$mode, NameTableAttr:$nametable);
 
-  let assemblyFormat = "attr-dict `(`$x`,` $y`)` $mode";
+  let assemblyFormat = "attr-dict $nametable`(`$x`,` $y`)` $mode";
 }
 
 def ANES_VRAMPutOp :
@@ -480,9 +492,9 @@ def ANES_FillTilesFromRLEAtOp :
     `vram_addr`, then passes `value` to `vram_put` from neslib.
   }];
 
-  let arguments = (ins LLVM_AnyPointer:$array, I8:$x, I8:$y);
+  let arguments = (ins LLVM_AnyPointer:$array, I8:$x, I8:$y, NameTableAttr:$nametable);
 
-  let assemblyFormat = "attr-dict $array `at` `(`$x`,` $y`)` `:` type($array)";
+  let assemblyFormat = "attr-dict $array `at`  $nametable`(`$x`,` $y`)` `:` type($array)";
 }
 
 
@@ -525,6 +537,15 @@ def ANES_FillPalAttrAtOp :
   let arguments = (ins MetaTilePalettePatternAttr:$pattern, I16:$length, I8:$x, I8:$y);
 
   let assemblyFormat = "attr-dict $pattern `x` $length `at` `(`$x`,` $y`)`";
+}
+
+def ANES_ScrollScreenOp :
+    ANES_Op<"scroll_screen", []> {
+  let summary = "Sets the background scroll values.";
+
+  let arguments = (ins Index:$x, Index:$y);
+
+  let assemblyFormat = "attr-dict `(`$x`,` $y`)`";
 }
 
 //===----------------------------------------------------------------------===//

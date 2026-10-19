@@ -14,18 +14,18 @@ func.func @set_bg_palette() {
 // -----
 
 // CHECK-LABEL: @vram_addr_for_tile_pos_tile
-// CHECK: anes.vram_addr_for_tile_pos({{.*}}, {{.*}}) <tile>
+// CHECK: anes.vram_addr_for_tile_pos <a>({{.*}}, {{.*}}) <tile>
 func.func @vram_addr_for_tile_pos_tile(%x: i8, %y: i8) {
-    anes.vram_addr_for_tile_pos(%x, %y) <tile> 
+    anes.vram_addr_for_tile_pos <a>(%x, %y) <tile> 
     return
 }
 
 // -----
 
 // CHECK-LABEL: @vram_addr_for_tile_pos_pal
-// CHECK: anes.vram_addr_for_tile_pos({{.*}}, {{.*}}) <palette>
+// CHECK: anes.vram_addr_for_tile_pos <a>({{.*}}, {{.*}}) <palette>
 func.func @vram_addr_for_tile_pos_pal(%x: i8, %y: i8) {
-    anes.vram_addr_for_tile_pos(%x, %y) <palette> 
+    anes.vram_addr_for_tile_pos <a> (%x, %y) <palette> 
     return
 }
 
@@ -62,7 +62,7 @@ func.func @set_tiles_at(%value: !llvm.array<12 x i8>, %x: i8, %y: i8) {
 // -----
 
 func.func @fill_tiles_from_compressed_at(%value: !llvm.ptr, %x: i8, %y: i8) {
-    anes.fill_tiles_from_rle_at %value at (%x, %y) : !llvm.ptr
+    anes.fill_tiles_from_rle_at %value at <a> (%x, %y) : !llvm.ptr
     return
 }
 
