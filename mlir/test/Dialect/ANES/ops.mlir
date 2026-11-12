@@ -1,4 +1,4 @@
-// RUN: mlir-opt -allow-unregistered-dialect %s | FileCheck %s
+// RUN: mlir-opt -allow-unregistered-dialect -split-input-file %s | FileCheck %s
 // Verify the printed output can be parsed.
 // RUN: mlir-opt -allow-unregistered-dialect -split-input-file %s | mlir-opt -allow-unregistered-dialect -split-input-file | FileCheck %s
 // Verify the generic form can be parsed.
@@ -83,12 +83,50 @@ anes.global_meta_sprite @sprite_global(
    #anes.sprite_data<{tile = 32, palette_id = 2}>]> : !anes.meta_sprite_handle<2, 1>
 ) : !anes.meta_sprite_handle<2, 1>
 
+
+// CHECK-LABEL: @get_global_meta_sprite
 func.func @get_global_meta_sprite() -> !anes.meta_sprite_handle<2, 1> {
+// CHECK: anes.get_global_meta_sprite @sprite_global : !anes.meta_sprite_handle<2, 1>
     %0 = anes.get_global_meta_sprite @sprite_global : !anes.meta_sprite_handle<2, 1>
     return %0 : !anes.meta_sprite_handle<2, 1>
 }
 
+// -----
+
+// CHECK-LABEL: @set_meta_sprite(
+// CHECK-SAME: %[[MS:.*]]: !anes.meta_sprite_handle<2, 1>, %[[X:.*]]: i8, %[[Y:.*]]: i8 
 func.func @set_meta_sprite(%metasprite: !anes.meta_sprite_handle<2, 1>, %x: i8, %y: i8) {
+// CHECK: anes.set_meta_sprite_at %[[MS]] at(%[[X]], %[[Y]]) : !anes.meta_sprite_handle<2, 1> 
     anes.set_meta_sprite_at %metasprite at (%x, %y) : !anes.meta_sprite_handle<2, 1>
+    return
+}
+
+// -----
+
+// CHECK-LABEL: @set_apu_status(
+func.func @set_apu_status() {
+// CHECK: anes.apu.set_status pulse0 dmc
+    anes.apu.set_status dmc pulse0
+    return
+}
+
+
+// -----
+
+// CHECK-LABEL: @set_pulse_parameters(
+// CHECK-SAME: %[[DUTY:.*]]: i8, %[[PERIOD:.*]]: i16
+func.func @set_pulse_parameters(%duty: i8, %period: i16) {
+// CHECK: anes.apu.set_pulse_parameters duty %[[DUTY]], period %[[PERIOD]]
+    anes.apu.set_pulse_parameters duty %duty, period %period
+    return
+}
+
+// -----
+
+// CHECK-LABEL: @set_channel_parameters(
+// CHECK-SAME: %[[PARAMS:.*]]: !anes.pulse_parameters
+func.func @set_channel_parameters(%params: !anes.pulse_parameters) {
+// CHECK: anes.apu.set_channel_parameters %[[PARAMS]] 
+    anes.apu.set_channel_parameters %params : !anes.pulse_parameters
     return
 }

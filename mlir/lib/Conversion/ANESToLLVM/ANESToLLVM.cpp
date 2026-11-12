@@ -17,7 +17,6 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Pass/Pass.h"
 
-
 namespace mlir {
 #define GEN_PASS_DEF_ANESTOLLVMCONVERSIONPASS
 #include "mlir/Conversion/Passes.h.inc"
@@ -28,6 +27,251 @@ using namespace mlir;
 //===----------------------------------------------------------------------===//
 // Pattern implementations
 //===----------------------------------------------------------------------===//
+
+//===----------------------------------------------------------------------===//
+// APU Related Ops
+//===----------------------------------------------------------------------===//
+
+struct SetStatusOpLowering final
+    : public ConvertOpToLLVMPattern<anes::SetStatusOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(anes::SetStatusOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const final {
+    auto loc = op.getLoc();
+
+    Value address = LLVM::ConstantOp::create(
+        rewriter, loc, rewriter.getI16Type(), op.kAddress);
+    Value ptr = LLVM::IntToPtrOp::create(
+        rewriter, loc, LLVM::LLVMPointerType::get(rewriter.getContext()),
+        address);
+    ;
+
+    auto statusVal = LLVM::ConstantOp::create(
+        rewriter, loc, rewriter.getI8Type(), op.packBits());
+
+    auto storeOp = LLVM::StoreOp::create(rewriter, loc, statusVal, ptr,
+                                         /*alignment*/ 1, /*isVolatile*/ true);
+    rewriter.replaceOp(op, storeOp);
+    return success();
+  }
+};
+
+Value insertBitField(ConversionPatternRewriter &rewriter, Location loc,
+                     int position, int width, const OpFoldResult &field,
+                     const Value &bitField) {
+  Value maskedFieldVal;
+  auto maybeFieldInt = getConstantIntValue(field);
+  if (maybeFieldInt.has_value()) {
+    maskedFieldVal = LLVM::ConstantOp::create(
+        rewriter, loc,
+        IntegerAttr::get(bitField.getType(),
+                         ((1U << width) - 1) & maybeFieldInt.value()));
+  } else {
+    auto maskVal = LLVM::ConstantOp::create(
+        rewriter, loc, IntegerAttr::get(bitField.getType(), (1U << width) - 1));
+    maskedFieldVal =
+        LLVM::AndOp::create(rewriter, loc, dyn_cast<Value>(field), maskVal);
+  }
+
+  Value shiftedVal = maskedFieldVal;
+  if (position > 0) {
+    auto posVal = LLVM::ConstantOp::create(
+        rewriter, loc, IntegerAttr::get(bitField.getType(), position));
+    shiftedVal = LLVM::ShlOp::create(rewriter, loc, maskedFieldVal, posVal);
+  }
+
+  return LLVM::OrOp::create(rewriter, loc, bitField, shiftedVal);
+}
+
+struct SetPulseParametersOpLowering final
+    : public ConvertOpToLLVMPattern<anes::SetPulseParametersOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(anes::SetPulseParametersOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const final {
+    auto loc = op.getLoc();
+
+    auto getAddressPtr = [&](int address) -> Value {
+      Value addressConst = LLVM::ConstantOp::create(
+          rewriter, loc, rewriter.getI16Type(), address);
+      Value ptr = LLVM::IntToPtrOp::create(
+          rewriter, loc, LLVM::LLVMPointerType::get(rewriter.getContext()),
+          addressConst);
+      return ptr;
+    };
+
+    // control register
+    if (op.hasControlBits()) {
+      auto ptrInit = getAddressPtr(op.kControlAddress);
+      Value init =
+          LLVM::ConstantOp::create(rewriter, loc, rewriter.getI8Type(), 0);
+      if (auto duty = op.getDuty())
+        init = insertBitField(rewriter, loc, op.kDutyBitsPos, op.kDutyBitsWidth,
+                              duty, init);
+      if (auto envLoop = op.getEnvLoop())
+        init = insertBitField(rewriter, loc, op.kEnvLoopBitsPos,
+                              op.kEnvLoopBitsWidth, envLoop, init);
+      if (auto constVol = op.getConstVolume())
+        init = insertBitField(rewriter, loc, op.kConstVolBitsPos,
+                              op.kConstVolBitsWidth, constVol, init);
+      if (auto envDiv = op.getEnvDivider())
+        init = insertBitField(rewriter, loc, op.kEnvDivBitsPos,
+                              op.kEnvDivBitsWidth, envDiv, init);
+      LLVM::StoreOp::create(rewriter, loc, init, ptrInit,
+                            /*alignment*/ 1, /*isVolatile*/ true);
+    }
+
+    // ramp register
+    if (op.hasRampBits()) {
+      auto ptrInit = getAddressPtr(op.kRampAddress);
+      Value init =
+          LLVM::ConstantOp::create(rewriter, loc, rewriter.getI8Type(), 0);
+      if (auto shift = op.getShift())
+        init = insertBitField(rewriter, loc, op.kShiftBitsPos,
+                              op.kShiftBitsWidth, shift, init);
+      if (auto negate = op.getNegateShift())
+        init = insertBitField(rewriter, loc, op.kNegateShiftBitsPos,
+                              op.kNegateShiftBitsWidth, negate, init);
+      if (auto sweepPeriod = op.getSweepPeriod())
+        init = insertBitField(rewriter, loc, op.kSweepPeriodBitsPos,
+                              op.kSweepPeriodBitsWidth, sweepPeriod, init);
+      if (auto sweepEnable = op.getSweepEnable())
+        init = insertBitField(rewriter, loc, op.kSweepEnableBitsPos,
+                              op.kSweepEnableBitsWidth, sweepEnable, init);
+      LLVM::StoreOp::create(rewriter, loc, init, ptrInit,
+                            /*alignment*/ 1, /*isVolatile*/ true);
+    }
+
+    auto maskAndShiftPeriodBits = [&](Value period, bool high) -> Value {
+      auto maskVal = LLVM::ConstantOp::create(
+          rewriter, loc,
+          IntegerAttr::get(rewriter.getI16Type(),
+                           (1U << op.kTotalPeriodBits) - 1));
+      period = LLVM::AndOp::create(rewriter, loc, period, maskVal);
+      if (high)
+        period = LLVM::LShrOp::create(
+            rewriter, loc, period,
+            LLVM::ConstantOp::create(rewriter, loc, rewriter.getI16Type(), 8));
+      return LLVM::TruncOp::create(rewriter, loc, rewriter.getI8Type(), period);
+    };
+
+    // low period
+    if (op.hasLowPeriodBits()) {
+      auto ptrInit = getAddressPtr(op.kPeriodLowAddress);
+      Value init =
+          LLVM::ConstantOp::create(rewriter, loc, rewriter.getI8Type(), 0);
+      if (auto period = op.getPeriod())
+        init = insertBitField(rewriter, loc, op.kLowPeriodBitsPos,
+                              op.kLowPeriodBitsWidth,
+                              maskAndShiftPeriodBits(period, false), init);
+      LLVM::StoreOp::create(rewriter, loc, init, ptrInit,
+                            /*alignment*/ 1, /*isVolatile*/ true);
+    }
+
+    // high period
+    if (op.hasHighPeriodBits()) {
+      auto ptrInit = getAddressPtr(op.kPeriodHighAddress);
+      Value init =
+          LLVM::ConstantOp::create(rewriter, loc, rewriter.getI8Type(), 0);
+      if (auto period = op.getPeriod())
+        init = insertBitField(rewriter, loc, op.kHighPeriodBitsPos,
+                              op.kHighPeriodBitsWidth,
+                              maskAndShiftPeriodBits(period, true), init);
+      if (auto lengthCounter = op.getLengthCounter())
+        init = insertBitField(rewriter, loc, op.kLengthCounterBitsPos,
+                              op.kLengthCounterBitsWidth, lengthCounter, init);
+      LLVM::StoreOp::create(rewriter, loc, init, ptrInit,
+                            /*alignment*/ 1, /*isVolatile*/ true);
+    }
+
+    rewriter.eraseOp(op);
+
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// PPU Related Ops
+//===----------------------------------------------------------------------===//
+
+struct BankSprOpLowering final : public OpConversionPattern<anes::BankSprOp> {
+  using Base::Base;
+
+  LogicalResult
+  matchAndRewrite(anes::BankSprOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const final {
+    auto loc = op.getLoc();
+
+    auto moduleOp = op->getParentOfType<ModuleOp>();
+    if (!moduleOp)
+      return rewriter.notifyMatchFailure(op, "Parent module not found.");
+
+    auto funcOp = LLVM::lookupOrCreateFn(
+        rewriter, moduleOp, "bank_spr",
+        {rewriter.getI8Type()},
+        LLVM::LLVMVoidType::get(rewriter.getContext()));
+
+    if (failed(funcOp))
+      return rewriter.notifyMatchFailure(
+          op, "could not find or create `bank_spr` func");
+    auto callOp = LLVM::CallOp::create(rewriter, loc, funcOp.value(), {op.getBank()});
+
+    rewriter.replaceOp(op, callOp);
+    return success();
+  }
+};
+
+struct OAMClearOpLowering final : public OpConversionPattern<anes::OAMClearOp> {
+  using Base::Base;
+
+  LogicalResult
+  matchAndRewrite(anes::OAMClearOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const final {
+    auto loc = op.getLoc();
+
+    auto moduleOp = op->getParentOfType<ModuleOp>();
+    if (!moduleOp)
+      return rewriter.notifyMatchFailure(op, "Parent module not found.");
+
+    auto funcOp =
+        LLVM::lookupOrCreateFn(rewriter, moduleOp, "oam_clear", {},
+                               LLVM::LLVMVoidType::get(rewriter.getContext()));
+    if (failed(funcOp))
+      return rewriter.notifyMatchFailure(
+          op, "could not find or create `oam_clear` func");
+    auto callOp = LLVM::CallOp::create(rewriter, loc, funcOp.value(), {});
+    rewriter.replaceOp(op, callOp);
+    return success();
+  }
+};
+
+struct PPUWAitNMIOpLowering final : public OpConversionPattern<anes::PPUWAitNMIOp> {
+  using Base::Base;
+
+  LogicalResult
+  matchAndRewrite(anes::PPUWAitNMIOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const final {
+    auto loc = op.getLoc();
+
+    auto moduleOp = op->getParentOfType<ModuleOp>();
+    if (!moduleOp)
+      return rewriter.notifyMatchFailure(op, "Parent module not found.");
+
+    auto funcOp =
+        LLVM::lookupOrCreateFn(rewriter, moduleOp, "oam_clear", {},
+                               LLVM::LLVMVoidType::get(rewriter.getContext()));
+    if (failed(funcOp))
+      return rewriter.notifyMatchFailure(
+          op, "could not find or create `oam_clear` func");
+    auto callOp = LLVM::CallOp::create(rewriter, loc, funcOp.value(), {});
+    rewriter.replaceOp(op, callOp);
+    return success();
+  }
+};
+
 
 struct PPUOffOpLowering final : public OpConversionPattern<anes::PPUOffOp> {
   using Base::Base;
@@ -572,14 +816,15 @@ struct ANESToLLVMDialectInterface : public ConvertToLLVMPatternInterface {
     typeConverter.addConversion([&](anes::MetaSpriteHandleType type) -> Type {
       return LLVM::LLVMPointerType::get(patterns.getContext());
     });
-    patterns.add<PPUOffOpLowering, PPUOnOpLowering, SetPalletteOpLowering,
+    patterns.add<BankSprOpLowering, OAMClearOpLowering, PPUWAitNMIOpLowering, PPUOffOpLowering, PPUOnOpLowering, SetPalletteOpLowering,
                  SetVRAMAddrForTilePosOpLowering, SetPalAttrAtOpLowering,
                  FillPalAttrAtOpLowering, SetTileAtOpLowering,
                  SetAllTilesAtOpLowering, FillTilesFromRLEAtOpLowering,
                  VRAMPutOpLowering, ScrollScreenOpLowering,
                  GlobalMetaSpriteOpLowering, GetGlobalMetaSpriteOpLowering,
                  SetMetaSpriteAtOpLowering>(patterns.getContext());
-    patterns.add<ScrollScreenOpLowering>(typeConverter);
+    patterns.add<SetPulseParametersOpLowering, SetStatusOpLowering,
+                 ScrollScreenOpLowering>(typeConverter);
   }
 };
 } // namespace

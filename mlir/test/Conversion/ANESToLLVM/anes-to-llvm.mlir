@@ -262,3 +262,27 @@ anes.global_meta_sprite @metasprite(#anes.meta_sprite<[
     #anes.sprite_data<{tile = 17}>, #anes.sprite_data<{tile = 4, flip_hz = true}>
     
 ]> : !anes.meta_sprite_handle<2, 2>) : !anes.meta_sprite_handle<2, 2>
+
+// -----
+
+// CHECK-LABEL: @set_apu_status(
+func.func @set_apu_status() {
+// CHECK-DAG:  %[[ADDRESS:.*]] = llvm.mlir.constant(16405 : i16) : i16
+// CHECK-DAG:  %[[VAL:.*]] = llvm.mlir.constant(17 : i8) : i8
+// CHECK:      %[[PTR:.*]] = llvm.inttoptr %[[ADDRESS]] : i16 to !llvm.ptr
+// CHECK-NEXT: llvm.store volatile %[[VAL]], %[[PTR]] <alignment = 1> : i8, !llvm.ptr
+    anes.apu.set_status dmc pulse0
+
+// CHECK:      llvm.return 
+    return
+}
+
+
+// -----
+
+// CHECK-LABEL: @set_pulse_parameters(
+// CHECK-SAME: %[[DUTY:.*]]: i8, %[[PERIOD:.*]]: i16
+func.func @set_pulse_parameters(%duty: i8, %period: i16) {
+    anes.apu.set_pulse_parameters duty %duty, period %period
+    return
+}

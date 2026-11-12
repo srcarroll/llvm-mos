@@ -168,16 +168,27 @@ def ANES_Dialect : Dialect {
   let useDefaultAttributePrinterParser = 1;
 }
 
-class ANES_Type<string typeName, string typeMnemonic, list<Trait> traits = []>
-    : TypeDef<ANES_Dialect, typeName, traits> {
-  let mnemonic = typeMnemonic;
-}
-
-class ANES_Op<string mnemonic, list<Trait> traits = []> :
-  Op<ANES_Dialect, mnemonic, traits> {}
-
 //===----------------------------------------------------------------------===//
 // ANES dialect Enums 
+//===----------------------------------------------------------------------===//
+
+//===----------------------------------------------------------------------===//
+// APU Related 
+//===----------------------------------------------------------------------===//
+
+def APUChannelEnum : I32EnumAttr<
+    "APUChannelEnum",
+    "An enum representing one of the 5 NES APU channels",
+    [I32EnumAttrCase<"Pulse0", 0, "pulse0">, I32EnumAttrCase<"Pulse1", 1, "pulse1">,
+     I32EnumAttrCase<"Triangle", 2, "triangle">, I32EnumAttrCase<"Noise", 3, "noise">,
+     I32EnumAttrCase<"DMC", 4, "dmnc">]
+> {
+    let genSpecializedAttr = 0;
+    let cppNamespace = "mlir::anes";
+}
+
+//===----------------------------------------------------------------------===//
+// PPU Related 
 //===----------------------------------------------------------------------===//
 
 def NameTableEnum : I32EnumAttr<
@@ -210,6 +221,16 @@ def PaletteTypeEnum : I32EnumAttr<
 
 //===----------------------------------------------------------------------===//
 // ANES dialect Attributes 
+//===----------------------------------------------------------------------===//
+
+//===----------------------------------------------------------------------===//
+// APU Related 
+//===----------------------------------------------------------------------===//
+
+def APUChannelAttr : EnumAttr<ANES_Dialect, APUChannelEnum, "apu_channel_attr">;
+
+//===----------------------------------------------------------------------===//
+// PPU Related 
 //===----------------------------------------------------------------------===//
 
 def NameTableAttr : EnumAttr<ANES_Dialect, NameTableEnum, "nametable_attr">;
@@ -312,7 +333,34 @@ def ANES_MetaSpriteAttr : AttrDef<ANES_Dialect, "MetaSprite", [TypedAttrInterfac
 // ANES dialect Types
 //===----------------------------------------------------------------------===//
 
-def ANES_TetType : ANES_Type<"Test", "test">;
+class ANES_Type<string typeName, string typeMnemonic, list<Trait> traits = []>
+    : TypeDef<ANES_Dialect, typeName, traits> {
+  let mnemonic = typeMnemonic;
+}
+
+//===----------------------------------------------------------------------===//
+// APU Related 
+//===----------------------------------------------------------------------===//
+
+def ANES_PulseParametersType : ANES_Type<"PulseParameters", "pulse_parameters"> {
+  let summary = "Parameters of the NES APU's pulse channel.";
+
+  let parameters = (ins);
+
+  let assemblyFormat = "";
+}
+
+def ANES_TriangleParametersType : ANES_Type<"TriangleParameters", "triangle_parameters"> {
+  let summary = "Parameters of the NES APU's triangle channel.";
+
+  let parameters = (ins);
+
+  let assemblyFormat = "";
+}
+
+//===----------------------------------------------------------------------===//
+// PPU Related 
+//===----------------------------------------------------------------------===//
 
 def ANES_MetaSpriteHandle : ANES_Type<"MetaSpriteHandle", "meta_sprite_handle"> {
   let parameters = (ins 
@@ -331,6 +379,193 @@ def ANES_MetaSpriteHandle : ANES_Type<"MetaSpriteHandle", "meta_sprite_handle"> 
 //===----------------------------------------------------------------------===//
 // ANES dialect Ops 
 //===----------------------------------------------------------------------===//
+
+class ANES_Op<string mnemonic, list<Trait> traits = []> :
+  Op<ANES_Dialect, mnemonic, traits> {}
+
+//===----------------------------------------------------------------------===//
+// APU Related 
+//===----------------------------------------------------------------------===//
+
+def ANES_SetStatusOp :
+    ANES_Op<"apu.set_status", []> {
+  let summary = "Set the APU status";
+
+  let description = [{
+    Enables the specified APU channel(s).  This is not a toggle
+    for individual channels. Channels not specified when invoking
+    this op will be turned off regardless of their current state.
+  }];
+
+  let arguments = (ins
+    UnitAttr:$pulse0,
+    UnitAttr:$pulse1,
+    UnitAttr:$triangle,
+    UnitAttr:$noise,
+    UnitAttr:$dmc
+  );
+
+  let assemblyFormat = [{
+    oilist(
+      `pulse0` $pulse0 
+      | `pulse1` $pulse1 
+      | `triangle` $triangle
+      | `noise` $noise
+      | `dmc` $dmc
+    )
+    attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    static constexpr int16_t kAddress =  0x4015;
+
+    uint8_t packBits() {
+      return 
+        getPulse0() | 
+        (getPulse1() << 1) |
+        (getTriangle() << 2) | 
+        (getNoise() << 3) |
+        (getDmc() << 4);
+    }
+  }];
+}
+
+def ANES_SetPulseParametersOp :
+    ANES_Op<"apu.set_pulse_parameters", [AttrSizedOperandSegments]> {
+  let summary = "Sets the parameters of the APU's pulse channel";
+
+  let arguments = (ins
+    Optional<I8>:$duty,
+    Optional<I1>:$env_loop,
+    Optional<I1>:$const_volume,
+    Optional<I8>:$env_divider,
+    Optional<I1>:$sweep_enable,
+    Optional<I8>:$sweep_period,
+    Optional<I1>:$negate_shift,
+    Optional<I8>:$shift,
+    Optional<I16>:$period,
+    Optional<I8>:$length_counter
+  );
+
+  let assemblyFormat = [{
+    oilist<`,`>(
+      `duty` $duty 
+      | `env_loop` $env_loop 
+      | `const_volume` $const_volume
+      | `env_divider` $env_divider
+      | `sweep_enable` $sweep_enable
+      | `sweep_period` $sweep_period
+      | `negate_shift` $negate_shift
+      | `shift` $shift
+      | `period` $period
+      | `length_counter` $length_counter
+    )
+    attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    static constexpr int16_t kControlAddress = 0x4000;
+    static constexpr int16_t kRampAddress = 0x4001;
+    static constexpr int16_t kPeriodLowAddress = 0x4002;
+    static constexpr int16_t kPeriodHighAddress = 0x4003;
+
+    // control register bits
+    static constexpr int kEnvDivBitsPos = 0;
+    static constexpr int kEnvDivBitsWidth = 4;
+    static constexpr int kConstVolBitsPos = 4;
+    static constexpr int kConstVolBitsWidth = 1;
+    static constexpr int kEnvLoopBitsPos = 5;
+    static constexpr int kEnvLoopBitsWidth = 1;
+    static constexpr int kDutyBitsPos = 6;
+    static constexpr int kDutyBitsWidth = 2;
+
+    // ramp bits
+    static constexpr int kShiftBitsPos = 0;
+    static constexpr int kShiftBitsWidth = 3;
+    static constexpr int kNegateShiftBitsPos = 3;
+    static constexpr int kNegateShiftBitsWidth = 1;
+    static constexpr int kSweepPeriodBitsPos = 4;
+    static constexpr int kSweepPeriodBitsWidth = 3;
+    static constexpr int kSweepEnableBitsPos = 7;
+    static constexpr int kSweepEnableBitsWidth = 1;
+
+    // period low
+    static constexpr int kLowPeriodBitsPos = 0;
+    static constexpr int kLowPeriodBitsWidth = 8;
+
+    // period high
+    static constexpr int kHighPeriodBitsPos = 0;
+    static constexpr int kHighPeriodBitsWidth = 3;
+    static constexpr int kLengthCounterBitsPos = 3;
+    static constexpr int kLengthCounterBitsWidth = 5;
+
+    static constexpr int kTotalPeriodBits = 11;
+
+    bool hasControlBits() {
+      return
+        (getDuty() != nullptr) ||
+        (getEnvLoop() != nullptr) ||
+        (getConstVolume() != nullptr) ||
+        (getEnvDivider() != nullptr);
+    }
+
+    bool hasRampBits() {
+      return
+        (getShift() != nullptr) ||
+        (getNegateShift() != nullptr) ||
+        (getSweepPeriod() != nullptr) ||
+        (getSweepEnable() != nullptr);
+    }
+
+    bool hasLowPeriodBits() {
+      return
+        (getPeriod() != nullptr);
+    }
+
+    bool hasHighPeriodBits() {
+      return
+        (getPeriod() != nullptr) ||
+        (getLengthCounter() != nullptr);
+    }
+  }];
+}
+
+def ANES_SetTriangleParametersOp :
+    ANES_Op<"apu.set_triangle_parameters", [AttrSizedOperandSegments]> {
+  let summary = "Sets the parameters of the APU's triangle channel";
+
+  let arguments = (ins
+    Optional<I1>:$counter_control,
+    Optional<I8>:$linear_counter,
+    Optional<I16>:$frequency,
+    Optional<I8>:$length_counter
+  );
+
+  let results = (outs ANES_TriangleParametersType:$result);
+
+  let assemblyFormat = [{
+    oilist<`,`>(
+      `counter_control` $counter_control 
+      | `linear_counter` $linear_counter
+      | `frequency` $frequency
+      | `length_counter` $length_counter
+    )
+    attr-dict `:` qualified(type($result))
+  }];
+}
+
+def ANES_SetChannelParametersOp :
+    ANES_Op<"apu.set_channel_parameters", []> {
+  let summary = "Sets the channel parameters in APU registers.";
+
+  let arguments = (ins
+    AnyTypeOf<[
+      ANES_PulseParametersType,
+      ANES_TriangleParametersType]>:$params
+  );
+
+  let assemblyFormat = "$params attr-dict `:` qualified(type($params))";
+}
 
 //===----------------------------------------------------------------------===//
 // PPU Related 
@@ -354,6 +589,30 @@ def ANES_PPUOnOp :
 // Background graphics
 //===----------------------------------------------------------------------===//
 
+def ANES_BankSprOp: 
+ ANES_Op<"ppu.bank_spr", []> {
+  let summary = "Set sprite bank";
+
+  let arguments = (ins
+    I8:$bank
+  );
+
+  let assemblyFormat = "$bank attr-dict";
+}
+
+def ANES_OAMClearOp: 
+ ANES_Op<"ppu.oam_clear", []> {
+  let summary = "Clear object attribute memory";
+
+  let assemblyFormat = "attr-dict ";
+}
+
+def ANES_PPUWAitNMIOp: 
+ ANES_Op<"ppu.wait_nmi", []> {
+  let summary = "Wait NMI";
+
+  let assemblyFormat = "attr-dict ";
+}
 
 def ANES_SetPalletteOp :
     ANES_Op<"set_palette", []> {
@@ -474,7 +733,7 @@ def ANES_SetAllTilesAtOp :
 
   let arguments = (ins LLVMArrayType:$array, I8:$x, I8:$y);
 
-  let assemblyFormat = "attr-dict $array `at` `(`$x`,` $y`)` `:` type($array)";
+  let assemblyFormat = "attr-dict $array `at` `(`$x`,` $y`)` `:` qualified(type($array))";
 }
 
 def ANES_FillTilesFromRLEAtOp :
@@ -494,7 +753,7 @@ def ANES_FillTilesFromRLEAtOp :
 
   let arguments = (ins LLVM_AnyPointer:$array, I8:$x, I8:$y, NameTableAttr:$nametable);
 
-  let assemblyFormat = "attr-dict $array `at`  $nametable`(`$x`,` $y`)` `:` type($array)";
+  let assemblyFormat = "$array `at`  $nametable`(`$x`,` $y`)` attr-dict `:` type($array)";
 }
 
 
@@ -607,7 +866,7 @@ def ANES_GetGlobalMetaSpriteOp : ANES_Op<"get_global_meta_sprite",
 
   let arguments = (ins FlatSymbolRefAttr:$name);
   let results = (outs ANES_MetaSpriteHandle:$result);
-  let assemblyFormat = " attr-dict $name `:` type($result)";
+  let assemblyFormat = " attr-dict $name `:` qualified(type($result))";
 }
 
 //===----------------------------------------------------------------------===//
@@ -627,7 +886,7 @@ def ANES_SetMetaSpriteAtOp :
 
   let arguments = (ins ANES_MetaSpriteHandle:$meta_sprite, I8:$x, I8:$y);
 
-  let assemblyFormat = "attr-dict $meta_sprite `at` `(`$x`,` $y`)` `:` type($meta_sprite)";
+  let assemblyFormat = "$meta_sprite `at` `(`$x`,` $y`)` attr-dict `:` qualified(type($meta_sprite))";
 }
 
 #endif // ANES_OPS
