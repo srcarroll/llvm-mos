@@ -114,8 +114,8 @@ func.func @set_apu_status() {
 // -----
 
 // CHECK-LABEL: @set_pulse_parameters(
-// CHECK-SAME: %[[DUTY:.*]]: i8, %[[PERIOD:.*]]: i16
-func.func @set_pulse_parameters(%duty: i8, %period: i16) {
+// CHECK-SAME: %[[DUTY:.*]]: i2, %[[PERIOD:.*]]: i16
+func.func @set_pulse_parameters(%duty: i2, %period: i16) {
 // CHECK: anes.apu.set_pulse_parameters duty %[[DUTY]], period %[[PERIOD]]
     anes.apu.set_pulse_parameters duty %duty, period %period
     return

@@ -28,6 +28,8 @@
 #define GET_ATTRDEF_CLASSES
 #include "mlir/Dialect/ANES/ANESAttributes.h.inc"
 
+#include "mlir/Dialect/ANES/ANESInterfaces.h.inc"
+
 #define GET_OP_CLASSES
 #include "mlir/Dialect/ANES/ANES.h.inc"
 

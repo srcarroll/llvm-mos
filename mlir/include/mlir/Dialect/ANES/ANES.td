@@ -156,6 +156,11 @@ include "mlir/IR/CommonAttrConstraints.td"
 include "mlir/IR/EnumAttr.td"
 include "mlir/IR/SymbolInterfaces.td"
 
+// TODO: Yes this file is bloated. We really should have separate attribute, types,
+// etc files. But, for now, everything is lumped together out of laziness.
+// This makes absolutely no functional difference.  It's more of a matter of organization,
+// separation of concerns, and compartmentalizing libraries.
+
 //===----------------------------------------------------------------------===//
 // ANES dialect definition
 //===----------------------------------------------------------------------===//
@@ -430,12 +435,161 @@ def ANES_SetStatusOp :
   }];
 }
 
+//===----------------------------------------------------------------------===//
+// APU Channel Interface
+//===----------------------------------------------------------------------===//
+
+def APUChannelOpInterface : OpInterface<"APUChannelOpInterface"> {
+  let description = [{
+    Interface for ops that implement an APU channel.
+
+    An APU channel consists of (up to) 4 8-bit registers.
+  }];
+
+  let cppNamespace = "::mlir::anes";
+
+  let methods = [
+    StaticInterfaceMethod<
+      /*desc=*/"Returns address of register 0.",
+      /*returnType=*/"unsigned",
+      /*methodName=*/"getReg0Address", (ins)
+    >,
+    StaticInterfaceMethod<
+      /*desc=*/"Returns address of register 1.",
+      /*returnType=*/"unsigned",
+      /*methodName=*/"getReg1Address", (ins)
+    >,
+    StaticInterfaceMethod<
+      /*desc=*/"Returns address of register 2.",
+      /*returnType=*/"unsigned",
+      /*methodName=*/"getReg2Address", (ins)
+    >,
+    StaticInterfaceMethod<
+      /*desc=*/"Returns address of register 3.",
+      /*returnType=*/"unsigned",
+      /*methodName=*/"getReg3Address", (ins)
+    >,
+    StaticInterfaceMethod<
+      /*desc=*/"Returns the ordered bit positions of each field in reg 0.",
+      /*returnType=*/"llvm::SmallVector<unsigned>",
+      /*methodName=*/"getReg0FieldPositions", (ins)
+    >,
+    StaticInterfaceMethod<
+      /*desc=*/"Returns the ordered bit positions of each field in reg 1.",
+      /*returnType=*/"llvm::SmallVector<unsigned>",
+      /*methodName=*/"getReg1FieldPositions", (ins)
+    >,
+    StaticInterfaceMethod<
+      /*desc=*/"Returns the ordered bit positions of each field in reg 2.",
+      /*returnType=*/"llvm::SmallVector<unsigned>",
+      /*methodName=*/"getReg2FieldPositions", (ins)
+    >,
+    StaticInterfaceMethod<
+      /*desc=*/"Returns the ordered bit positions of each field in reg 3.",
+      /*returnType=*/"llvm::SmallVector<unsigned>",
+      /*methodName=*/"getReg3FieldPositions", (ins)
+    >,
+    StaticInterfaceMethod<
+      /*desc=*/"Returns the ordered bit-widths of each field.",
+      /*returnType=*/"llvm::SmallVector<unsigned>",
+      /*methodName=*/"getReg0FieldWidths", (ins)
+    >,
+    StaticInterfaceMethod<
+      /*desc=*/"Returns the ordered bit-widths of each field.",
+      /*returnType=*/"llvm::SmallVector<unsigned>",
+      /*methodName=*/"getReg1FieldWidths", (ins)
+    >,
+    StaticInterfaceMethod<
+      /*desc=*/"Returns the ordered bit-widths of each field.",
+      /*returnType=*/"llvm::SmallVector<unsigned>",
+      /*methodName=*/"getReg2FieldWidths", (ins)
+    >,
+    StaticInterfaceMethod<
+      /*desc=*/"Returns the ordered bit-widths of each field.",
+      /*returnType=*/"llvm::SmallVector<unsigned>",
+      /*methodName=*/"getReg3FieldWidths", (ins)
+    >,
+    InterfaceMethod<
+      /*desc=*/"Returns operands associated with register 0.",
+      /*returnType=*/"::llvm::SmallVector<Value>",
+      /*methodName=*/"getReg0Fields",
+      /*args=*/(ins)
+    >,
+    InterfaceMethod<
+      /*desc=*/"Returns operands associated with register 1.",
+      /*returnType=*/"::llvm::SmallVector<Value>",
+      /*methodName=*/"getReg1Fields",
+      /*args=*/(ins)
+    >,
+    InterfaceMethod<
+      /*desc=*/"Returns operands associated with register 2.",
+      /*returnType=*/"::llvm::SmallVector<Value>",
+      /*methodName=*/"getReg2Fields",
+      /*args=*/(ins)
+    >,
+    InterfaceMethod<
+      /*desc=*/"Returns operands associated with register 3.",
+      /*returnType=*/"::llvm::SmallVector<Value>",
+      /*methodName=*/"getReg3Fields",
+      /*args=*/(ins)
+    >,
+    InterfaceMethod<
+      /*desc=*/"Returns true if any reg 0 fields are present.",
+      /*returnType=*/"bool",
+      /*methodName=*/"hasReg0",
+      /*args=*/(ins),
+      /*methodBody=*/[{
+        return ::llvm::any_of($_op.getReg0Fields(), [](Value val) { return val != nullptr; });
+      }]
+    >,
+    InterfaceMethod<
+      /*desc=*/"Returns true if any reg 1 fields are present.",
+      /*returnType=*/"bool",
+      /*methodName=*/"hasReg1",
+      /*args=*/(ins),
+      /*methodBody=*/[{
+        return ::llvm::any_of($_op.getReg1Fields(), [](Value val) { return val != nullptr; });
+      }]
+    >,
+    InterfaceMethod<
+      /*desc=*/"Returns true if any reg 2 fields are present.",
+      /*returnType=*/"bool",
+      /*methodName=*/"hasReg2",
+      /*args=*/(ins),
+      /*methodBody=*/[{
+        return ::llvm::any_of($_op.getReg2Fields(), [](Value val) { return val != nullptr; });
+      }]
+    >,
+    InterfaceMethod<
+      /*desc=*/"Returns true if any reg 3 fields are present.",
+      /*returnType=*/"bool",
+      /*methodName=*/"hasReg3",
+      /*args=*/(ins),
+      /*methodBody=*/[{
+        return ::llvm::any_of($_op.getReg3Fields(), [](Value val) { return val != nullptr; });
+      }]
+    >
+  ];
+
+  // let verify = [{
+  //   unsigned total = 0;
+  //   for (unsigned w : ::mlir::cast<RegisterEncodingOpInterface>($_op).getFieldWidths())
+  //     total += w;
+  //   unsigned regWidth = $_op->getResult(0).getType().getIntOrFloatBitWidth();
+  //   if (total != regWidth)
+  //     return $_op->emitOpError("field widths sum to ") << total 
+  //            << ", expected " << regWidth;
+  //   return success();
+  // }];
+}
+
 def ANES_SetPulseParametersOp :
     ANES_Op<"apu.set_pulse_parameters", [AttrSizedOperandSegments]> {
   let summary = "Sets the parameters of the APU's pulse channel";
 
+  // TODO: Add argument for choosing which square channel (0 or 1)
   let arguments = (ins
-    Optional<I8>:$duty,
+    Optional<I<2>>:$duty,
     Optional<I1>:$env_loop,
     Optional<I1>:$const_volume,
     Optional<I8>:$env_divider,
@@ -530,28 +684,202 @@ def ANES_SetPulseParametersOp :
   }];
 }
 
-def ANES_SetTriangleParametersOp :
-    ANES_Op<"apu.set_triangle_parameters", [AttrSizedOperandSegments]> {
-  let summary = "Sets the parameters of the APU's triangle channel";
+// Dumb that this doesn't already exist.
+class SnakeToCamel<string str, bit capitalizeFirst = 0> {
+  // Split into single characters
+  list<string> chars = !foreach(i, !range(0, !size(str)), !substr(str, i, 1));
 
-  let arguments = (ins
-    Optional<I1>:$counter_control,
-    Optional<I8>:$linear_counter,
-    Optional<I16>:$frequency,
-    Optional<I8>:$length_counter
+  // Capitalize any character preceded by "_" (and index 0 if capitalizeFirst)
+  list<string> mapped = !foreach(i, !range(0, !size(chars)),
+    !if(!eq(chars[i], "_"), "",
+      !if(!or(!and(!eq(i, 0), capitalizeFirst),
+              !and(!gt(i, 0), !eq(chars[!sub(i, 1)], "_"))),
+        !toupper(chars[i]),
+        chars[i]
+      )
+    )
   );
 
-  let results = (outs ANES_TriangleParametersType:$result);
+  string ret = !interleave(mapped, "");
+}
 
-  let assemblyFormat = [{
-    oilist<`,`>(
-      `counter_control` $counter_control 
-      | `linear_counter` $linear_counter
-      | `frequency` $frequency
-      | `length_counter` $length_counter
-    )
-    attr-dict `:` qualified(type($result))
+class APURegisterField<string k, int v, int p> {
+  string name = k;
+  int width = v;
+  int position = p;
+}
+
+class APURegister<list<APURegisterField> f, int a> {
+  list<APURegisterField> fields = f; 
+  int address = a;
+}
+
+class APUChannelOp<
+  string channel_name,
+  APURegister reg0,
+  APURegister reg1,
+  APURegister reg2,
+  APURegister reg3,
+  list<Trait> traits = []>
+    : ANES_Op<"apu.set_" # channel_name # "_parameters", !listconcat(traits, [
+        Pure,
+        DeclareOpInterfaceMethods<APUChannelOpInterface>
+      ])> {
+
+  let summary = "Sets the parameters of the APU's " # channel_name # " channel";
+
+  list<string> reg0FieldNames = !foreach(p, reg0.fields, p.name);
+  list<string> reg1FieldNames = !foreach(p, reg1.fields, p.name);
+  list<string> reg2FieldNames = !foreach(p, reg2.fields, p.name);
+  list<string> reg3FieldNames = !foreach(p, reg3.fields, p.name);
+
+  list<int> reg0FieldWidths = !foreach(p, reg0.fields, p.width);
+  list<int> reg1FieldWidths = !foreach(p, reg1.fields, p.width);
+  list<int> reg2FieldWidths = !foreach(p, reg2.fields, p.width);
+  list<int> reg3FieldWidths = !foreach(p, reg3.fields, p.width);
+
+  list<int> reg0FieldPositions = !foreach(p, reg0.fields, p.position);
+  list<int> reg1FieldPositions = !foreach(p, reg1.fields, p.position);
+  list<int> reg2FieldPositions = !foreach(p, reg2.fields, p.position);
+  list<int> reg3FieldPositions = !foreach(p, reg3.fields, p.position);
+
+  list<TypeConstraint> reg0FieldTypes = !foreach(p, reg0.fields, Optional<I<p.width>>); 
+  list<TypeConstraint> reg1FieldTypes = !foreach(p, reg1.fields, Optional<I<p.width>>); 
+  list<TypeConstraint> reg2FieldTypes = !foreach(p, reg2.fields, Optional<I<p.width>>); 
+  list<TypeConstraint> reg3FieldTypes = !foreach(p, reg3.fields, Optional<I<p.width>>); 
+
+  let arguments = !dag(ins, reg0FieldTypes, reg0FieldNames);
+  let append arguments = !dag(ins, reg1FieldTypes, reg1FieldNames);
+  let append arguments = !dag(ins, reg2FieldTypes, reg2FieldNames);
+  let append arguments = !dag(ins, reg3FieldTypes, reg3FieldNames);
+
+  let assemblyFormat = "oilist<`,`>(" # !interleave(
+    !foreach(n, !listconcat(reg0FieldNames, reg1FieldNames, reg2FieldNames, reg3FieldNames), "`" # n # "` $" # n),
+    " | "
+  ) # ") attr-dict";
+
+  let extraClassDefinition = [{
+    unsigned $cppClass::getReg0Address() {
+      return }] # reg0.address # [{;
+    }
+
+    unsigned $cppClass::getReg1Address() {
+      return }] # reg1.address # [{;
+    }
+
+    unsigned $cppClass::getReg2Address() {
+      return }] # reg2.address # [{;
+    }
+
+    unsigned $cppClass::getReg3Address() {
+      return }] # reg3.address # [{;
+    }
+
+    llvm::SmallVector<unsigned> $cppClass::getReg0FieldWidths() {
+      return { }] # !interleave(reg0FieldWidths, ", ") # [{ };
+    }
+
+    llvm::SmallVector<unsigned> $cppClass::getReg1FieldWidths() {
+      return { }] # !interleave(reg1FieldWidths, ", ") # [{ };
+    }
+
+    llvm::SmallVector<unsigned> $cppClass::getReg2FieldWidths() {
+      return { }] # !interleave(reg2FieldWidths, ", ") # [{ };
+    }
+
+    llvm::SmallVector<unsigned> $cppClass::getReg3FieldWidths() {
+      return { }] # !interleave(reg3FieldWidths, ", ") # [{ };
+    }
+
+    llvm::SmallVector<unsigned> $cppClass::getReg0FieldPositions() {
+      return { }] # !interleave(reg0FieldPositions, ", ") # [{ };
+    }
+
+    llvm::SmallVector<unsigned> $cppClass::getReg1FieldPositions() {
+      return { }] # !interleave(reg1FieldPositions, ", ") # [{ };
+    }
+
+    llvm::SmallVector<unsigned> $cppClass::getReg2FieldPositions() {
+      return { }] # !interleave(reg2FieldPositions, ", ") # [{ };
+    }
+
+    llvm::SmallVector<unsigned> $cppClass::getReg3FieldPositions() {
+      return { }] # !interleave(reg3FieldPositions, ", ") # [{ };
+    }
+
+    llvm::SmallVector<Value> $cppClass::getReg0Fields() {
+      return { }] # !interleave(!foreach(n, reg0FieldNames, "get" # SnakeToCamel<n, 1>.ret # "()"), ", ") # [{ };
+    }
+
+    llvm::SmallVector<Value> $cppClass::getReg1Fields() {
+      return { }] # !interleave(!foreach(n, reg1FieldNames, "get" # SnakeToCamel<n, 1>.ret # "()"), ", ") # [{ };
+    }
+
+    llvm::SmallVector<Value> $cppClass::getReg2Fields() {
+      return { }] # !interleave(!foreach(n, reg2FieldNames, "get" # SnakeToCamel<n, 1>.ret # "()"), ", ") # [{ };
+    }
+
+    llvm::SmallVector<Value> $cppClass::getReg3Fields() {
+      return { }] # !interleave(!foreach(n, reg3FieldNames, "get" # SnakeToCamel<n, 1>.ret # "()"), ", ") # [{ };
+    }
   }];
+
+}
+
+def ANES_SetPulse0ParametersOp :
+    APUChannelOp<
+      "pulse0",
+      APURegister<[APURegisterField<"duty", 2, 6>, APURegisterField<"envelope_loop", 1, 5>,
+                   APURegisterField<"constant_volume", 1, 4>, APURegisterField<"volume", 4, 0>], 0x4000>,
+      APURegister<[APURegisterField<"sweep_enable", 1, 7>, APURegisterField<"sweep_period", 3, 4>,
+                   APURegisterField<"sweep_negate", 1, 3>, APURegisterField<"sweep_shift", 3, 0>], 0x4001>,
+      APURegister<[APURegisterField<"period_low", 8, 0>], 0x4002>,
+      APURegister<[APURegisterField<"length_counter", 5, 3>, APURegisterField<"period_high", 3, 0>], 0x4003>,
+      [AttrSizedOperandSegments, APUChannelOpInterface]> {
+}
+
+def ANES_SetPulse1ParametersOp :
+    APUChannelOp<
+      "pulse1",
+      APURegister<[APURegisterField<"duty", 2, 6>, APURegisterField<"envelope_loop", 1, 5>,
+                   APURegisterField<"constant_volume", 1, 4>, APURegisterField<"volume", 4, 0>], 0x4004>,
+      APURegister<[APURegisterField<"sweep_enable", 1, 7>, APURegisterField<"sweep_period", 3, 4>,
+                   APURegisterField<"sweep_negate", 1, 3>, APURegisterField<"sweep_shift", 3, 0>], 0x4005>,
+      APURegister<[APURegisterField<"period_low", 8, 0>], 0x4006>,
+      APURegister<[APURegisterField<"length_counter", 5, 3>, APURegisterField<"period_high", 3, 0>], 0x4007>,
+      [AttrSizedOperandSegments, APUChannelOpInterface]> {
+}
+
+def ANES_SetTriangleParametersOp :
+    APUChannelOp<
+      "triangle",
+      APURegister<[APURegisterField<"counter_control", 1, 7>, APURegisterField<"linear_counter", 7, 0>], 0x4008>,
+      APURegister<[], 0x4009>,
+      APURegister<[APURegisterField<"period_low", 8, 0>], 0x400A>,
+      APURegister<[APURegisterField<"length_counter", 5, 3>, APURegisterField<"period_high", 3, 0>], 0x400B>,
+      [AttrSizedOperandSegments, APUChannelOpInterface]> {
+}
+
+def ANES_SetNoiseParametersOp :
+    APUChannelOp<
+      "noise",
+      APURegister<[APURegisterField<"counter_control", 1, 5>, APURegisterField<"constant_volume", 1, 4>,
+                   APURegisterField<"volume", 4, 0>], 0x400C>,
+      APURegister<[], 0x400D>, // unused
+      APURegister<[APURegisterField<"periodic_noise_mode", 1, 7>, APURegisterField<"noise_period", 4, 0>], 0x400E>,
+      APURegister<[APURegisterField<"length_counter", 5, 3>], 0x400F>,
+      [AttrSizedOperandSegments, APUChannelOpInterface]> {
+}
+
+def ANES_SetDMCParametersOp :
+    APUChannelOp<
+      "dmc",
+      APURegister<[APURegisterField<"irq_enable", 1, 7>, APURegisterField<"loop", 1, 6>,
+                   APURegisterField<"sample_rate", 4, 0>], 0x4010>,
+      APURegister<[APURegisterField<"load_counter", 7, 0>], 0x4011>,
+      APURegister<[APURegisterField<"sample_address", 8, 0>], 0x4012>,
+      APURegister<[APURegisterField<"sample_length", 8, 0>], 0x4013>,
+      [AttrSizedOperandSegments, APUChannelOpInterface]> {
 }
 
 def ANES_SetChannelParametersOp :

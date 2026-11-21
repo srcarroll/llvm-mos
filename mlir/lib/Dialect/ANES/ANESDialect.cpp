@@ -17,6 +17,7 @@ using namespace mlir::anes;
 
 #include "mlir/Dialect/ANES/ANESDialect.cpp.inc"
 #include "mlir/Dialect/ANES/ANESEnums.cpp.inc"
+#include "mlir/Dialect/ANES/ANESInterfaces.cpp.inc"
 
 void anes::ANESDialect::initialize() {
   addAttributes<

@@ -58,27 +58,32 @@ struct SetStatusOpLowering final
   }
 };
 
-Value insertBitField(ConversionPatternRewriter &rewriter, Location loc,
-                     int position, int width, const OpFoldResult &field,
+Value insertBitField(PatternRewriter &rewriter, Location loc, int position,
+                     int width, const OpFoldResult &field,
                      const Value &bitField) {
+  Type bitFieldType = bitField.getType();
   Value maskedFieldVal;
   auto maybeFieldInt = getConstantIntValue(field);
   if (maybeFieldInt.has_value()) {
     maskedFieldVal = LLVM::ConstantOp::create(
         rewriter, loc,
-        IntegerAttr::get(bitField.getType(),
+        IntegerAttr::get(bitFieldType,
                          ((1U << width) - 1) & maybeFieldInt.value()));
   } else {
     auto maskVal = LLVM::ConstantOp::create(
-        rewriter, loc, IntegerAttr::get(bitField.getType(), (1U << width) - 1));
-    maskedFieldVal =
-        LLVM::AndOp::create(rewriter, loc, dyn_cast<Value>(field), maskVal);
+        rewriter, loc, IntegerAttr::get(bitFieldType, (1U << width) - 1));
+    auto fieldVal = dyn_cast<Value>(field);
+    if (fieldVal.getType().getIntOrFloatBitWidth() <
+        bitFieldType.getIntOrFloatBitWidth())
+      fieldVal = LLVM::ZExtOp::create(rewriter, loc, bitFieldType,
+                                      dyn_cast<Value>(field));
+    maskedFieldVal = LLVM::AndOp::create(rewriter, loc, fieldVal, maskVal);
   }
 
   Value shiftedVal = maskedFieldVal;
   if (position > 0) {
     auto posVal = LLVM::ConstantOp::create(
-        rewriter, loc, IntegerAttr::get(bitField.getType(), position));
+        rewriter, loc, IntegerAttr::get(bitFieldType, position));
     shiftedVal = LLVM::ShlOp::create(rewriter, loc, maskedFieldVal, posVal);
   }
 
@@ -108,7 +113,7 @@ struct SetPulseParametersOpLowering final
       auto ptrInit = getAddressPtr(op.kControlAddress);
       Value init =
           LLVM::ConstantOp::create(rewriter, loc, rewriter.getI8Type(), 0);
-      if (auto duty = op.getDuty())
+      if (auto duty = adaptor.getDuty())
         init = insertBitField(rewriter, loc, op.kDutyBitsPos, op.kDutyBitsWidth,
                               duty, init);
       if (auto envLoop = op.getEnvLoop())
@@ -193,6 +198,55 @@ struct SetPulseParametersOpLowering final
   }
 };
 
+static void storeBitField(ConversionPatternRewriter &rewriter, Location loc,
+                          int address, ArrayRef<Value> regFields,
+                          ArrayRef<unsigned> regFieldPositions,
+                          ArrayRef<unsigned> regFieldWidths) {
+  Value addressConst =
+      LLVM::ConstantOp::create(rewriter, loc, rewriter.getI16Type(), address);
+  Value ptr = LLVM::IntToPtrOp::create(
+      rewriter, loc, LLVM::LLVMPointerType::get(rewriter.getContext()),
+      addressConst);
+  Value init = LLVM::ConstantOp::create(rewriter, loc, rewriter.getI8Type(), 0);
+  for (auto [field, position, width] :
+       llvm::zip(regFields, regFieldPositions, regFieldWidths)) {
+    if (field == nullptr)
+      continue;
+
+    init = insertBitField(rewriter, loc, position, width, field, init);
+  }
+  LLVM::StoreOp::create(rewriter, loc, init, ptr,
+                        /*alignment*/ 1, /*isVolatile*/ true);
+}
+
+struct APUChannelOpLowering
+    : public ConvertOpInterfaceToLLVMPattern<anes::APUChannelOpInterface> {
+  using ConvertOpInterfaceToLLVMPattern::ConvertOpInterfaceToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(anes::APUChannelOpInterface op, ArrayRef<Value> operands,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+
+    if (op.hasReg0())
+      storeBitField(rewriter, loc, op.getReg0Address(), op.getReg0Fields(),
+                    op.getReg0FieldPositions(), op.getReg0FieldWidths());
+    if (op.hasReg1())
+      storeBitField(rewriter, loc, op.getReg1Address(), op.getReg1Fields(),
+                    op.getReg1FieldPositions(), op.getReg1FieldWidths());
+    if (op.hasReg2())
+      storeBitField(rewriter, loc, op.getReg2Address(), op.getReg2Fields(),
+                    op.getReg2FieldPositions(), op.getReg2FieldWidths());
+    if (op.hasReg3())
+      storeBitField(rewriter, loc, op.getReg3Address(), op.getReg3Fields(),
+                    op.getReg3FieldPositions(), op.getReg3FieldWidths());
+
+    rewriter.eraseOp(op);
+
+    return success();
+  }
+};
+
 //===----------------------------------------------------------------------===//
 // PPU Related Ops
 //===----------------------------------------------------------------------===//
@@ -210,14 +264,14 @@ struct BankSprOpLowering final : public OpConversionPattern<anes::BankSprOp> {
       return rewriter.notifyMatchFailure(op, "Parent module not found.");
 
     auto funcOp = LLVM::lookupOrCreateFn(
-        rewriter, moduleOp, "bank_spr",
-        {rewriter.getI8Type()},
+        rewriter, moduleOp, "bank_spr", {rewriter.getI8Type()},
         LLVM::LLVMVoidType::get(rewriter.getContext()));
 
     if (failed(funcOp))
       return rewriter.notifyMatchFailure(
           op, "could not find or create `bank_spr` func");
-    auto callOp = LLVM::CallOp::create(rewriter, loc, funcOp.value(), {op.getBank()});
+    auto callOp =
+        LLVM::CallOp::create(rewriter, loc, funcOp.value(), {op.getBank()});
 
     rewriter.replaceOp(op, callOp);
     return success();
@@ -248,7 +302,8 @@ struct OAMClearOpLowering final : public OpConversionPattern<anes::OAMClearOp> {
   }
 };
 
-struct PPUWAitNMIOpLowering final : public OpConversionPattern<anes::PPUWAitNMIOp> {
+struct PPUWAitNMIOpLowering final
+    : public OpConversionPattern<anes::PPUWAitNMIOp> {
   using Base::Base;
 
   LogicalResult
@@ -271,7 +326,6 @@ struct PPUWAitNMIOpLowering final : public OpConversionPattern<anes::PPUWAitNMIO
     return success();
   }
 };
-
 
 struct PPUOffOpLowering final : public OpConversionPattern<anes::PPUOffOp> {
   using Base::Base;
@@ -813,18 +867,19 @@ struct ANESToLLVMDialectInterface : public ConvertToLLVMPatternInterface {
   void populateConvertToLLVMConversionPatterns(
       ConversionTarget &target, LLVMTypeConverter &typeConverter,
       RewritePatternSet &patterns) const final {
-    typeConverter.addConversion([&](anes::MetaSpriteHandleType type) -> Type {
-      return LLVM::LLVMPointerType::get(patterns.getContext());
+    MLIRContext *ctx = patterns.getContext();
+    typeConverter.addConversion([ctx](anes::MetaSpriteHandleType type) -> Type {
+      return LLVM::LLVMPointerType::get(ctx);
     });
-    patterns.add<BankSprOpLowering, OAMClearOpLowering, PPUWAitNMIOpLowering, PPUOffOpLowering, PPUOnOpLowering, SetPalletteOpLowering,
+    patterns.add<BankSprOpLowering, OAMClearOpLowering, PPUWAitNMIOpLowering,
+                 PPUOffOpLowering, PPUOnOpLowering, SetPalletteOpLowering,
                  SetVRAMAddrForTilePosOpLowering, SetPalAttrAtOpLowering,
                  FillPalAttrAtOpLowering, SetTileAtOpLowering,
                  SetAllTilesAtOpLowering, FillTilesFromRLEAtOpLowering,
-                 VRAMPutOpLowering, ScrollScreenOpLowering,
-                 GlobalMetaSpriteOpLowering, GetGlobalMetaSpriteOpLowering,
-                 SetMetaSpriteAtOpLowering>(patterns.getContext());
-    patterns.add<SetPulseParametersOpLowering, SetStatusOpLowering,
-                 ScrollScreenOpLowering>(typeConverter);
+                 VRAMPutOpLowering, GlobalMetaSpriteOpLowering,
+                 GetGlobalMetaSpriteOpLowering, SetMetaSpriteAtOpLowering>(ctx);
+    patterns.add<APUChannelOpLowering, SetPulseParametersOpLowering,
+                 SetStatusOpLowering, ScrollScreenOpLowering>(typeConverter);
   }
 };
 } // namespace

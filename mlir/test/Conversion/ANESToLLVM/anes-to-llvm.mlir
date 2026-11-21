@@ -1,6 +1,4 @@
-// RUN: mlir-opt -convert-to-llvm=dynamic=true -split-input-file %s | mlir-opt --canonicalize --cse -split-input-file | FileCheck %s
-// TODO: Figure out why -convert-to-llvm -canonicalize crashes on test cases there convert !anes.meta_sprite_handle
-// in function arg or returns
+// RUN: mlir-opt -convert-to-llvm=dynamic=true --canonicalize --cse -split-input-file %s | FileCheck %s
 
 // CHECK: llvm.mlir.global internal @bg_palette() {addr_space = 0 : i32} : !llvm.array<16 x i8>
 // CHECK-LABEL: @set_bg_palette
@@ -281,8 +279,85 @@ func.func @set_apu_status() {
 // -----
 
 // CHECK-LABEL: @set_pulse_parameters(
-// CHECK-SAME: %[[DUTY:.*]]: i8, %[[PERIOD:.*]]: i16
-func.func @set_pulse_parameters(%duty: i8, %period: i16) {
+// CHECK-SAME: %[[DUTY:.*]]: i2, %[[PERIOD:.*]]: i16
+func.func @set_pulse_parameters(%duty: i2, %period: i16) {
     anes.apu.set_pulse_parameters duty %duty, period %period
+    return
+}
+
+// -----
+
+// CHECK-LABEL: @set_triangle_parameters_0(
+// CHECK-SAME: %[[CTRL:.*]]: i1, %[[COUNTER:.*]]: i7
+func.func @set_triangle_parameters_0(%counter_control: i1, %linear_counter: i7) {
+// CHECK-DAG:  %[[COUNTER_MASK:.*]] = llvm.mlir.constant(127 : i8) : i8
+// CHECK-DAG:  %[[COUNTER_WIDTH:.*]] = llvm.mlir.constant(7 : i8) : i8
+// CHECK-DAG:  %[[CTRL_MASK:.*]] = llvm.mlir.constant(1 : i8) : i8
+// CHECK-DAG:  %[[INIT:.*]] = llvm.mlir.constant(0 : i8) : i8
+// CHECK-DAG:  %[[REG0:.*]] = llvm.mlir.constant(16392 : i16) : i16
+// CHECK:      %[[PTR:.*]] = llvm.inttoptr %[[REG0]] : i16 to !llvm.ptr
+// CHECK:      %[[CTRL_EXT:.*]] = llvm.zext %[[CTRL]] : i1 to i8
+// CHECK-NEXT: %[[CTRL_MASKED:.*]] = llvm.and %[[CTRL_EXT]], %[[CTRL_MASK]] : i8
+// CHECK-NEXT: %[[CTRL_SHIFTED:.*]] = llvm.shl %[[CTRL_MASKED]], %[[COUNTER_WIDTH]] : i8
+// CHECK-NEXT: %[[VAL0:.*]] = llvm.or %[[INIT]], %[[CTRL_SHIFTED]] : i8
+// CHECK:      %[[COUNTER_EXT:.*]] = llvm.zext %[[COUNTER]] : i7 to i8
+// CHECK-NEXT: %[[COUNTER_MASKED:.*]] = llvm.and %[[COUNTER_EXT]], %[[COUNTER_MASK]] : i8
+// CHECK-NEXT: %[[VAL1:.*]] = llvm.or %[[VAL0]], %[[COUNTER_MASKED]] : i8
+
+// CHECK:      llvm.store volatile %[[VAL1]], %[[PTR]] <alignment = 1> : i8, !llvm.ptr
+    anes.apu.set_triangle_parameters linear_counter %linear_counter, counter_control %counter_control
+// CHECK-NEXT: llvm.return
+    return
+}
+
+// -----
+
+// CHECK-LABEL: @set_triangle_parameters_2(
+// CHECK-SAME: %[[PERIOD:.*]]: i8
+func.func @set_triangle_parameters_2(%period: i8) {
+// CHECK-DAG:  %[[PERIOD_MASK:.*]] = llvm.mlir.constant(-1 : i8) : i8
+// CHECK-DAG:  %[[INIT:.*]] = llvm.mlir.constant(0 : i8) : i8
+// CHECK-DAG:  %[[REG0:.*]] = llvm.mlir.constant(16394 : i16) : i16
+// CHECK:      %[[PTR:.*]] = llvm.inttoptr %[[REG0]] : i16 to !llvm.ptr
+// CHECK-NEXT: %[[PERIOD_MASKED:.*]] = llvm.and %[[PERIOD]], %[[PERIOD_MASK]] : i8
+// CHECK-NEXT: %[[VAL0:.*]] = llvm.or %[[INIT]], %[[PERIOD_MASKED]] : i8
+
+// CHECK:      llvm.store volatile %[[VAL0]], %[[PTR]] <alignment = 1> : i8, !llvm.ptr
+    anes.apu.set_triangle_parameters period_low %period
+// CHECK-NEXT: llvm.return
+    return
+}
+
+// -----
+
+// CHECK-LABEL: @set_triangle_parameters_3(
+// CHECK-SAME: %[[COUNTER:.*]]: i5, %[[PERIOD:.*]]: i3
+func.func @set_triangle_parameters_3(%length_counter: i5, %period_high: i3) {
+// CHECK-DAG:  %[[PERIOD_MASK:.*]] = llvm.mlir.constant(7 : i8) : i8
+// CHECK-DAG:  %[[PERIOD_WIDTH:.*]] = llvm.mlir.constant(3 : i8) : i8
+// CHECK-DAG:  %[[COUNTER_MASK:.*]] = llvm.mlir.constant(31 : i8) : i8
+// CHECK-DAG:  %[[INIT:.*]] = llvm.mlir.constant(0 : i8) : i8
+// CHECK-DAG:  %[[REG0:.*]] = llvm.mlir.constant(16395 : i16) : i16
+// CHECK:      %[[PTR:.*]] = llvm.inttoptr %[[REG0]] : i16 to !llvm.ptr
+// CHECK:      %[[COUNTER_EXT:.*]] = llvm.zext %[[COUNTER]] : i5 to i8
+// CHECK-NEXT: %[[COUNTER_MASKED:.*]] = llvm.and %[[COUNTER_EXT]], %[[COUNTER_MASK]] : i8
+// CHECK-NEXT: %[[COUNTER_SHIFTED:.*]] = llvm.shl %[[COUNTER_MASKED]], %[[PERIOD_WIDTH]] : i8
+// CHECK-NEXT: %[[VAL0:.*]] = llvm.or %[[INIT]], %[[COUNTER_SHIFTED]] : i8
+// CHECK:      %[[PERIOD_EXT:.*]] = llvm.zext %[[PERIOD]] : i3 to i8
+// CHECK-NEXT: %[[PERIOD_MASKED:.*]] = llvm.and %[[PERIOD_EXT]], %[[PERIOD_MASK]] : i8
+// CHECK-NEXT: %[[VAL1:.*]] = llvm.or %[[VAL0]], %[[PERIOD_MASKED]] : i8
+
+// CHECK:      llvm.store volatile %[[VAL1]], %[[PTR]] <alignment = 1> : i8, !llvm.ptr
+    anes.apu.set_triangle_parameters length_counter %length_counter, period_high %period_high
+// CHECK-NEXT: llvm.return
+    return
+}
+
+// -----
+
+// CHECK-LABEL: @set_triangle_parameters_null(
+func.func @set_triangle_parameters_null() {
+    anes.apu.set_triangle_parameters
+// CHECK-NEXT: llvm.return
     return
 }
