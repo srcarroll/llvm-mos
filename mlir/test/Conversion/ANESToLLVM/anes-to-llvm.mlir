@@ -1,5 +1,15 @@
 // RUN: mlir-opt -convert-to-llvm=dynamic=true --canonicalize --cse -split-input-file %s | FileCheck %s
 
+// CHECK-LABEL: @wait_nmi()
+func.func @wait_nmi() {
+// CHECK-NEXT:  llvm.call @ppu_wait_nmi() : () -> ()
+    anes.ppu.wait_nmi
+// CHECK-NEXT:  llvm.return
+    return
+}
+
+// -----
+
 // CHECK: llvm.mlir.global internal @bg_palette() {addr_space = 0 : i32} : !llvm.array<16 x i8>
 // CHECK-LABEL: @set_bg_palette
 func.func @set_bg_palette() {

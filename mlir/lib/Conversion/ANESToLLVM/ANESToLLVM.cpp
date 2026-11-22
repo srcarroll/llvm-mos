@@ -316,11 +316,11 @@ struct PPUWAitNMIOpLowering final
       return rewriter.notifyMatchFailure(op, "Parent module not found.");
 
     auto funcOp =
-        LLVM::lookupOrCreateFn(rewriter, moduleOp, "oam_clear", {},
+        LLVM::lookupOrCreateFn(rewriter, moduleOp, "ppu_wait_nmi", {},
                                LLVM::LLVMVoidType::get(rewriter.getContext()));
     if (failed(funcOp))
       return rewriter.notifyMatchFailure(
-          op, "could not find or create `oam_clear` func");
+          op, "could not find or create `ppu_wait_nmi` func");
     auto callOp = LLVM::CallOp::create(rewriter, loc, funcOp.value(), {});
     rewriter.replaceOp(op, callOp);
     return success();
